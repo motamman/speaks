@@ -1,0 +1,12 @@
+# Documentation (contains analysis of backend for reference)
+docs/
+
+# Mistakenly created lib folder (code is in stuart_speaks_app/lib/)
+lib/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
