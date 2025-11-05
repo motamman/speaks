@@ -12,6 +12,7 @@ import '../../core/services/text_chunker.dart';
 import '../../core/services/app_logger.dart';
 import '../../core/services/error_handler.dart';
 import '../../core/utils/input_validator.dart';
+import '../../core/constants/accessibility_constants.dart';
 import '../../core/providers/tts_provider.dart';
 
 /// Screen displaying quick phrases that can be spoken with one tap
@@ -468,14 +469,61 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
             ListTile(
               leading: const Icon(Icons.delete, color: Colors.red),
               title: const Text('Delete Phrase'),
+              minVerticalPadding: AccessibilityConstants.comfortableSpacing,
               onTap: () {
                 Navigator.pop(context);
-                _deletePhrase(phrase);
+                _confirmDeletePhrase(phrase);
               },
             ),
           ],
         ),
       ),
     );
+  }
+
+  /// Confirm before deleting phrase (motor impairment safety)
+  Future<void> _confirmDeletePhrase(Phrase phrase) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Phrase?'),
+        content: Text('Remove "${phrase.text}" from your quick phrases?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            style: TextButton.styleFrom(
+              minimumSize: const Size(
+                AccessibilityConstants.minTapTargetSize,
+                AccessibilityConstants.standardButtonHeight,
+              ),
+            ),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              minimumSize: const Size(
+                AccessibilityConstants.minTapTargetSize,
+                AccessibilityConstants.standardButtonHeight,
+              ),
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      await _deletePhrase(phrase);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Phrase deleted'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    }
   }
 }

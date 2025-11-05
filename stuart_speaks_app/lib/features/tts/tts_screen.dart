@@ -15,6 +15,7 @@ import '../../core/services/app_logger.dart';
 import '../../core/services/error_handler.dart';
 import '../../core/services/rate_limiter.dart';
 import '../../core/utils/input_validator.dart';
+import '../../core/constants/accessibility_constants.dart';
 import '../../core/providers/tts_provider.dart';
 import '../input/word_wheel/word_wheel_widget.dart';
 import '../settings/settings_screen.dart';
@@ -483,6 +484,44 @@ class _TTSScreenState extends State<TTSScreen> {
     }
   }
 
+  /// Confirm before deleting item from history (motor impairment safety)
+  Future<void> _confirmDeleteFromHistory(SpeechHistoryItem item) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete from History?'),
+        content: Text('Remove "${item.text}" from your speech history?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            style: TextButton.styleFrom(
+              minimumSize: const Size(
+                AccessibilityConstants.minTapTargetSize,
+                AccessibilityConstants.standardButtonHeight,
+              ),
+            ),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              minimumSize: const Size(
+                AccessibilityConstants.minTapTargetSize,
+                AccessibilityConstants.standardButtonHeight,
+              ),
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      _deleteFromHistory(item);
+    }
+  }
+
   /// Delete item from history
   void _deleteFromHistory(SpeechHistoryItem item) {
     setState(() {
@@ -798,64 +837,64 @@ class _TTSScreenState extends State<TTSScreen> {
                           if (_inputMode == InputMode.typeAndWheel)
                             Positioned.fill(
                               child: Container(
-                                color: _showWheel ? Colors.black.withAlpha(15) : Colors.transparent,
-                                alignment: Alignment.center,
-                                child: Material(
-                                  elevation: _showWheel ? 12 : 0,
-                                  color: Colors.transparent,
-                                  borderRadius: BorderRadius.circular(200),
-                                  child: Container(
-                                    width: 400,
-                                    height: 400,
-                                    decoration: BoxDecoration(
-                                      color: _showWheel ? const Color(0xFFEAD4A4).withAlpha(180) : Colors.transparent,
-                                      borderRadius: BorderRadius.circular(200),
+                                  color: _showWheel ? Colors.black.withAlpha(15) : Colors.transparent,
+                                  alignment: Alignment.center,
+                                  child: Material(
+                                    elevation: _showWheel ? 12 : 0,
+                                    color: Colors.transparent,
+                                    borderRadius: BorderRadius.circular(200),
+                                    child: Container(
+                                      width: 400,
+                                      height: 400,
+                                      decoration: BoxDecoration(
+                                        color: _showWheel ? const Color(0xFFEAD4A4).withAlpha(180) : Colors.transparent,
+                                        borderRadius: BorderRadius.circular(200),
+                                      ),
+                                      child: _currentSuggestions.isNotEmpty
+                                          ? WordWheelWidget(
+                                              words: _currentSuggestions,
+                                              onWordSelected: _onWordSelected,
+                                              showEmpty: false,
+                                              onWheelShown: () {
+                                                FocusScope.of(context).unfocus();
+                                                setState(() {
+                                                  _showWheel = true;
+                                                });
+                                              },
+                                              onWheelHidden: () {
+                                                setState(() {
+                                                  _showWheel = false;
+                                                });
+                                                _textFieldFocus.requestFocus();
+                                              },
+                                              onTapWhenHidden: () {
+                                                _textFieldFocus.requestFocus();
+                                              },
+                                            )
+                                          : WordWheelWidget(
+                                              words: const [],
+                                              onWordSelected: _onWordSelected,
+                                              showEmpty: true,
+                                              onTapHoldStart: _onTapHoldStart,
+                                              onWheelShown: () {
+                                                FocusScope.of(context).unfocus();
+                                                setState(() {
+                                                  _showWheel = true;
+                                                });
+                                              },
+                                              onWheelHidden: () {
+                                                setState(() {
+                                                  _showWheel = false;
+                                                });
+                                                _textFieldFocus.requestFocus();
+                                              },
+                                              onTapWhenHidden: () {
+                                                _textFieldFocus.requestFocus();
+                                              },
+                                            ),
                                     ),
-                                    child: _currentSuggestions.isNotEmpty
-                                        ? WordWheelWidget(
-                                            words: _currentSuggestions,
-                                            onWordSelected: _onWordSelected,
-                                            showEmpty: false,
-                                            onWheelShown: () {
-                                              FocusScope.of(context).unfocus();
-                                              setState(() {
-                                                _showWheel = true;
-                                              });
-                                            },
-                                            onWheelHidden: () {
-                                              setState(() {
-                                                _showWheel = false;
-                                              });
-                                              _textFieldFocus.requestFocus();
-                                            },
-                                            onTapWhenHidden: () {
-                                              _textFieldFocus.requestFocus();
-                                            },
-                                          )
-                                        : WordWheelWidget(
-                                            words: const [],
-                                            onWordSelected: _onWordSelected,
-                                            showEmpty: true,
-                                            onTapHoldStart: _onTapHoldStart,
-                                            onWheelShown: () {
-                                              FocusScope.of(context).unfocus();
-                                              setState(() {
-                                                _showWheel = true;
-                                              });
-                                            },
-                                            onWheelHidden: () {
-                                              setState(() {
-                                                _showWheel = false;
-                                              });
-                                              _textFieldFocus.requestFocus();
-                                            },
-                                            onTapWhenHidden: () {
-                                              _textFieldFocus.requestFocus();
-                                            },
-                                          ),
                                   ),
                                 ),
-                              ),
                             ),
                         ],
                       ),
@@ -1127,26 +1166,28 @@ class _TTSScreenState extends State<TTSScreen> {
 
                 // Add to Quick Phrases button
                 IconButton(
-                  icon: const Icon(Icons.add_circle_outline, color: Color(0xFF2563EB), size: 20),
-                  onPressed: () => _addToQuickPhrases(item.text, cachedAudio: item.cachedAudio),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: 36,
-                    minHeight: 36,
+                  icon: const Icon(
+                    Icons.add_circle_outline,
+                    color: Color(0xFF2563EB),
+                    size: AccessibilityConstants.standardIconSize,
                   ),
+                  onPressed: () => _addToQuickPhrases(item.text, cachedAudio: item.cachedAudio),
+                  constraints: AccessibleTapTarget.minimum(),
                   tooltip: 'Add to Quick Phrases',
                 ),
 
+                const SizedBox(width: AccessibilityConstants.minSpacing),
+
                 // Delete button
                 IconButton(
-                  icon: Icon(Icons.close, color: Colors.grey[600], size: 20),
-                  onPressed: () => _deleteFromHistory(item),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: 36,
-                    minHeight: 36,
+                  icon: Icon(
+                    Icons.delete_outline,
+                    color: Colors.grey[600],
+                    size: AccessibilityConstants.standardIconSize,
                   ),
-                  tooltip: 'Delete',
+                  onPressed: () => _confirmDeleteFromHistory(item),
+                  constraints: AccessibleTapTarget.minimum(),
+                  tooltip: 'Delete from history',
                 ),
               ],
             ),

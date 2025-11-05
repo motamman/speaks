@@ -59,7 +59,7 @@ class _WordWheelWidgetState extends State<WordWheelWidget> {
   Widget build(BuildContext context) {
     // Use single gesture detector for both states to maintain gesture continuity
     return GestureDetector(
-      behavior: HitTestBehavior.opaque,
+      behavior: _isVisible ? HitTestBehavior.opaque : HitTestBehavior.translucent,
       onTapDown: _onTapDown,
       onTapUp: _onTapUp,
       onLongPressStart: _onLongPressStart,
