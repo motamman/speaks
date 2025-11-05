@@ -58,6 +58,8 @@ class _WordWheelWidgetState extends State<WordWheelWidget> {
   @override
   Widget build(BuildContext context) {
     // Use single gesture detector for both states to maintain gesture continuity
+    // When hidden: translucent allows taps through to TextField while still detecting long press
+    // When visible: opaque captures all gestures
     return GestureDetector(
       behavior: _isVisible ? HitTestBehavior.opaque : HitTestBehavior.translucent,
       onTapDown: _onTapDown,
@@ -147,7 +149,7 @@ class _WordWheelWidgetState extends State<WordWheelWidget> {
     _holdTimer?.cancel();
 
     if (!_isHolding) {
-      // If wheel is not visible, notify parent (to show keyboard)
+      // If wheel is not visible, notify parent to show keyboard
       if (!_isVisible) {
         widget.onTapWhenHidden?.call();
       } else {

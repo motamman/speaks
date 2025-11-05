@@ -833,11 +833,17 @@ class _TTSScreenState extends State<TTSScreen> {
                             ),
                           ),
 
-                          // Floating word wheel overlay - always present to capture gestures
+                          // Floating word wheel overlay - centered, ignores pointer when suggestions showing
                           if (_inputMode == InputMode.typeAndWheel)
-                            Positioned.fill(
-                              child: Container(
+                            Positioned(
+                              left: 0,
+                              right: 0,
+                              top: 40,
+                              child: IgnorePointer(
+                                ignoring: _currentSuggestions.isNotEmpty && !_showWheel,
+                                child: Container(
                                   color: _showWheel ? Colors.black.withAlpha(15) : Colors.transparent,
+                                  height: 400,
                                   alignment: Alignment.center,
                                   child: Material(
                                     elevation: _showWheel ? 12 : 0,
@@ -895,6 +901,7 @@ class _TTSScreenState extends State<TTSScreen> {
                                     ),
                                   ),
                                 ),
+                              ),
                             ),
                         ],
                       ),
