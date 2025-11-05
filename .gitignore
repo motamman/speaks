@@ -1,8 +1,9 @@
 # Documentation (contains analysis of backend for reference)
-docs/
+/docs/
 
-# Mistakenly created lib folder (code is in stuart_speaks_app/lib/)
-lib/
+# Mistakenly created lib folder at root (code is in stuart_speaks_app/lib/)
+# The leading slash ensures only the top-level lib/ is ignored, not subdirectories
+/lib/
 
 # macOS
 .DS_Store
