@@ -11,12 +11,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - WebSocket streaming implementation for ElevenLabs
 - WebSocket streaming implementation for Play.ht
 - WebSocket streaming implementation for Resemble.AI
-- Offline TTS support
+- Offline TTS support with device fallback
 - Voice recording interface for custom cloning
-- Custom phrase library
 - Cloud backup for settings and phrases
 - Widget support for quick access
 - Accessibility improvements (switch control, eye tracking)
+- Export/import user data
+- Usage statistics and analytics
+
+## [0.1.0+2] - 2024-11-05
+
+### Added
+- **Word Wheel Interface**
+  - Continuous gesture support for word selection
+  - Tap-and-hold to show word suggestions
+  - Drag-to-select functionality with immediate feedback
+  - Visual feedback with hover states
+  - Haptic feedback for selections
+  - Automatic keyboard dismissal when wheel appears
+  - Transparent disc background for better visibility
+
+- **Quick Phrases Feature**
+  - Persistent phrase library with custom phrases
+  - One-tap phrase playback
+  - Usage tracking and sorting by frequency
+  - Add phrases directly from history with + button
+  - Persistent audio caching for instant playback
+  - Cache management and cleanup
+  - Phrase deletion support
+
+- **History Management**
+  - Recent phrases displayed below input area
+  - Audio caching for instant replay
+  - Direct addition to Quick Phrases via + icon
+  - Individual phrase deletion
+  - Timestamp tracking
+  - Cached audio indicator
+
+- **Input Modes**
+  - Type Only mode for keyboard-only input
+  - Type & Wheel mode for hybrid input
+  - Mode switcher in main screen
+  - Tap on text field shows keyboard in wheel mode
+  - Long press activates word wheel
+
+- **App Icon**
+  - Custom app icon using Stuart character
+  - Adaptive icons for Android
+  - All required iOS icon sizes
+
+- **Documentation**
+  - Comprehensive code review document
+  - Detailed remediation plan (4-week roadmap)
+  - Issue categorization and prioritization
+  - Implementation guidelines
+
+### Changed
+- Speak button now pinned to bottom of screen
+- Keyboard behavior improved with proper focus management
+- Word suggestions now appear in horizontal bar below text input
+- History section scrolls independently when keyboard open
+- Removed long-press menu in favor of direct action buttons
+- Disc transparency significantly improved for better word visibility
+
+### Fixed
+- Wheel drag-to-select now works on initial long press
+- Keyboard properly dismisses when wheel appears
+- Keyboard returns when wheel is dismissed
+- History items no longer overflow when keyboard opens
+- Word wheel and disc properly aligned
+- Audio cache properly transferred when adding phrases to quick list
+- Scrolling behavior fixed for all screen components
+
+### Technical
+- Improved state management for word wheel visibility
+- Added callbacks for wheel lifecycle events (shown/hidden)
+- Implemented persistent cache storage with base64 encoding
+- Better separation of concerns in widget architecture
+- Added constants for magic numbers (pending full refactor)
+
+### Performance
+- Optimized word wheel rendering
+- Reduced re-renders with better state management
+- Efficient audio cache loading on startup
+
+### Known Issues
+- Extensive null safety violations (see REMEDIATION_PLAN.md)
+- No offline mode support yet
+- Missing semantic labels for screen readers
+- No rate limiting on API calls
+- Limited error recovery mechanisms
+- Test coverage at 0% (comprehensive test suite planned)
 
 ## [0.1.0] - 2025-01-04
 
