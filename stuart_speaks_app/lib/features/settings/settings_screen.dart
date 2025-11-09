@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
@@ -12,6 +13,7 @@ import '../../core/providers/tts_provider.dart';
 import '../../core/models/default_provider_templates.dart';
 import '../../core/models/provider_template.dart';
 import '../../core/services/custom_provider_storage.dart';
+import 'vocabulary_import_screen.dart';
 
 /// Settings screen for configuring TTS providers
 class SettingsScreen extends StatefulWidget {
@@ -359,14 +361,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
       // Convert to .speakjson format
       final jsonContent = template.toSpeakJson();
 
-      // Create temporary file
-      final tempDir = await getTemporaryDirectory();
-      final file = File('${tempDir.path}/${provider.id}.speakjson');
-      await file.writeAsString(jsonContent);
+      // Create file in temp directory and share via XFile.fromData
+      final fileName = '${provider.id}.speakjson';
+      final bytes = jsonContent.codeUnits;
 
-      // Share the file
+      // Share using XFile.fromData which handles iOS sandboxing better
+      final xFile = XFile.fromData(
+        Uint8List.fromList(bytes),
+        name: fileName,
+        mimeType: 'application/json',
+      );
+
       final result = await Share.shareXFiles(
-        [XFile(file.path)],
+        [xFile],
         subject: '${provider.name} TTS Provider Configuration',
         text: 'Import this configuration in Stuart Speaks to add the ${provider.name} provider.',
       );
@@ -407,6 +414,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
       appBar: AppBar(
         title: const Text('TTS Provider Settings'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.library_books),
+            tooltip: 'Import Vocabulary',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const VocabularyImportScreen(),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.file_upload),
             tooltip: 'Import Provider Config',

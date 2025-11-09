@@ -144,6 +144,69 @@ class WordUsageTracker {
     return words;
   }
 
+  /// Import word usage from text analysis
+  /// This will add/update words in the vocabulary based on their frequency in the analyzed text
+  Future<ImportStats> importFromTextAnalysis(
+    Map<String, int> wordFrequencies, {
+    bool overwriteExisting = false,
+    int minFrequency = 1,
+  }) async {
+    int added = 0;
+    int updated = 0;
+    int skipped = 0;
+
+    for (final entry in wordFrequencies.entries) {
+      final word = entry.key;
+      final frequency = entry.value;
+
+      // Skip if below minimum frequency
+      if (frequency < minFrequency) {
+        skipped++;
+        continue;
+      }
+
+      final key = word.toLowerCase();
+
+      if (_vocabulary.containsKey(key)) {
+        if (overwriteExisting) {
+          // Update existing word with imported frequency
+          final existingWord = _vocabulary[key]!;
+          _vocabulary[key] = Word(
+            text: existingWord.text,
+            phonetic: existingWord.phonetic,
+            usageCount: existingWord.usageCount + frequency,
+            lastUsed: DateTime.now(),
+          );
+          updated++;
+        } else {
+          // Just increment usage count
+          for (var i = 0; i < frequency; i++) {
+            _vocabulary[key]!.recordUsage();
+          }
+          updated++;
+        }
+      } else {
+        // Add new word with imported frequency
+        _vocabulary[key] = Word(
+          text: word,
+          phonetic: _generateSimplePhonetic(word),
+          usageCount: frequency,
+          lastUsed: DateTime.now(),
+        );
+        added++;
+      }
+    }
+
+    await _saveVocabulary();
+
+    return ImportStats(
+      added: added,
+      updated: updated,
+      skipped: skipped,
+      total: wordFrequencies.length,
+    );
+  }
+
   /// Reset all usage statistics
   Future<void> resetStatistics() async {
     _vocabulary.clear();
@@ -284,5 +347,25 @@ class WordUsageTracker {
     // Simplified phonetic - just lowercase for now
     // Could be enhanced with actual phonetic rules later
     return word.toLowerCase().trim();
+  }
+}
+
+/// Statistics from importing word usage data
+class ImportStats {
+  final int added; // New words added
+  final int updated; // Existing words updated
+  final int skipped; // Words skipped (below threshold)
+  final int total; // Total words in import
+
+  const ImportStats({
+    required this.added,
+    required this.updated,
+    required this.skipped,
+    required this.total,
+  });
+
+  @override
+  String toString() {
+    return 'ImportStats(added: $added, updated: $updated, skipped: $skipped, total: $total)';
   }
 }
