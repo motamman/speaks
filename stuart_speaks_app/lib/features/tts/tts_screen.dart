@@ -653,6 +653,8 @@ class _TTSScreenState extends State<TTSScreen> {
     final isLandscape = mediaQuery.orientation == Orientation.landscape;
 
     return Scaffold(
+      // Never resize - we handle keyboard manually
+      resizeToAvoidBottomInset: false,
       appBar: AppBar(
         title: Row(
           children: [
@@ -754,23 +756,20 @@ class _TTSScreenState extends State<TTSScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Top 2/3 - Text entry and word wheel
+        // Top 2/3 - Text entry and word wheel (NOT scrollable)
         Expanded(
           flex: 2,
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Text input area
-                _buildInputArea(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Text input area
+              _buildInputArea(),
 
-                // Word wheel
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                  child: Center(child: _buildWordWheel()),
-                ),
-              ],
-            ),
+              // Word wheel - fills remaining space
+              Expanded(
+                child: Center(child: _buildWordWheel()),
+              ),
+            ],
           ),
         ),
 
@@ -797,40 +796,45 @@ class _TTSScreenState extends State<TTSScreen> {
     );
   }
 
-  /// Tablet portrait layout - 2/3 left (input), 1/3 right (wheel top, phrases bottom)
+  /// Tablet portrait layout - 2/3 top (text entry + wheel), 1/3 bottom (recent phrases)
   Widget _buildTabletPortraitLayout() {
-    return Row(
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Left side - Input area (2/3 width)
+        // Top 2/3 - Text entry and word wheel (NOT scrollable)
         Expanded(
           flex: 2,
-          child: SingleChildScrollView(
-            child: _buildInputArea(),
-          ),
-        ),
-
-        // Right side - Wheel and Phrases (1/3 width)
-        Expanded(
-          flex: 1,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Word wheel (top half) - centered in quadrant
+              // Text input area
+              _buildInputArea(),
+
+              // Word wheel - fills remaining space
               Expanded(
                 child: Center(child: _buildWordWheel()),
               ),
+            ],
+          ),
+        ),
 
-              // Phrases list (bottom half) - flush left and top
-              Expanded(
-                child: Align(
-                  alignment: Alignment.topLeft,
-                  child: SingleChildScrollView(
+        const SizedBox(height: 8),
+
+        // Bottom 1/3 - Recent phrases (full width, scrollable)
+        Expanded(
+          flex: 1,
+          child: Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(color: Colors.grey[300]!, width: 1),
+              ),
+            ),
+            child: _speechHistory.isEmpty
+                ? const SizedBox.shrink()
+                : SingleChildScrollView(
                     child: _buildPhrasesList(),
                   ),
-                ),
-              ),
-            ],
           ),
         ),
       ],
@@ -839,86 +843,133 @@ class _TTSScreenState extends State<TTSScreen> {
 
   /// Tablet landscape layout - 2/3 top (input full width), 1/3 bottom (wheel left, phrases right)
   Widget _buildTabletLandscapeLayout() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Top - Input area (2/3 height, full width) - flush top
-        Expanded(
-          flex: 2,
-          child: Align(
-            alignment: Alignment.topLeft,
-            child: SingleChildScrollView(
-              child: _buildInputArea(),
+    final mediaQuery = MediaQuery.of(context);
+    final keyboardHeight = mediaQuery.viewInsets.bottom;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableHeight = constraints.maxHeight;
+        final bottomSectionHeight = availableHeight * 0.33; // Fixed 1/3 of available space
+        final topSectionHeight = keyboardHeight > 0
+            ? availableHeight - keyboardHeight // With keyboard: fill space above keyboard
+            : availableHeight * 0.67; // No keyboard: take 2/3
+
+        return Stack(
+          children: [
+            // Top - Input area (shrinks when keyboard appears, stays visible)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: topSectionHeight,
+              child: _buildInputArea(isLandscape: true),
             ),
-          ),
-        ),
 
-        // Bottom - Wheel and Phrases (1/3 height)
-        Expanded(
-          flex: 1,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Word wheel (left half) - centered in quadrant
-              Expanded(
-                child: Center(child: _buildWordWheel()),
-              ),
-
-              // Phrases list (right half) - flush left and top
-              Expanded(
-                child: Align(
-                  alignment: Alignment.topLeft,
-                  child: SingleChildScrollView(
-                    child: _buildPhrasesList(),
+            // Bottom - Wheel and Phrases (fixed at bottom, gets covered by keyboard)
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              height: bottomSectionHeight,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Word wheel (left half) - centered in quadrant
+                  Expanded(
+                    child: Center(child: _buildWordWheel()),
                   ),
-                ),
+
+                  // Phrases list (right half) - flush left and top
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.topLeft,
+                      child: SingleChildScrollView(
+                        child: _buildPhrasesList(),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
-        ),
-      ],
+            ),
+          ],
+        );
+      },
     );
   }
 
   /// Build input area with text field, suggestions, and speak button
-  Widget _buildInputArea() {
+  Widget _buildInputArea({bool isLandscape = false}) {
     return Padding(
       padding: const EdgeInsets.all(16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: isLandscape ? MainAxisSize.max : MainAxisSize.min,
         children: [
-          // Text field
-          TextField(
-            key: _textFieldKey,
-            controller: _textController,
-            focusNode: _textFieldFocus,
-            maxLines: 6,
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w500,
-            ),
-            decoration: InputDecoration(
-              hintText: 'Type here...',
-              hintStyle: TextStyle(
-                color: Colors.grey[400],
-                fontSize: 18,
-              ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(width: 2),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(
-                  color: Colors.blue,
-                  width: 2,
+          // Text field - expandable in landscape, fixed in portrait
+          isLandscape
+              ? Expanded(
+                  child: TextField(
+                    key: _textFieldKey,
+                    controller: _textController,
+                    focusNode: _textFieldFocus,
+                    maxLines: null,
+                    expands: true,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: 'Type here...',
+                      hintStyle: TextStyle(
+                        color: Colors.grey[400],
+                        fontSize: 18,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(width: 2),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(
+                          color: Colors.blue,
+                          width: 2,
+                        ),
+                      ),
+                      filled: true,
+                      fillColor: Colors.grey[50],
+                    ),
+                  ),
+                )
+              : TextField(
+                  key: _textFieldKey,
+                  controller: _textController,
+                  focusNode: _textFieldFocus,
+                  maxLines: 6,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: 'Type here...',
+                    hintStyle: TextStyle(
+                      color: Colors.grey[400],
+                      fontSize: 18,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(width: 2),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(
+                        color: Colors.blue,
+                        width: 2,
+                      ),
+                    ),
+                    filled: true,
+                    fillColor: Colors.grey[50],
+                  ),
                 ),
-              ),
-              filled: true,
-              fillColor: Colors.grey[50],
-            ),
-          ),
 
           // Word suggestions bar - always reserve space for consistent layout
           Container(
