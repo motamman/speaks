@@ -17,7 +17,7 @@ import '../../core/services/rate_limiter.dart';
 import '../../core/utils/input_validator.dart';
 import '../../core/constants/accessibility_constants.dart';
 import '../../core/providers/tts_provider.dart';
-import '../input/word_wheel/word_wheel_widget.dart';
+import '../input/word_wheel/word_wheel_widget_v2.dart';
 import '../settings/settings_screen.dart';
 import '../phrases/phrases_screen.dart';
 
@@ -28,8 +28,6 @@ class TTSScreen extends StatefulWidget {
   @override
   State<TTSScreen> createState() => _TTSScreenState();
 }
-
-enum InputMode { typeOnly, typeAndWheel }
 
 class _TTSScreenState extends State<TTSScreen> {
   final TextEditingController _textController = TextEditingController();
@@ -46,10 +44,8 @@ class _TTSScreenState extends State<TTSScreen> {
   List<SpeechHistoryItem> _speechHistory = [];
   bool _isLoading = true;
   bool _isSpeaking = false;
-  bool _showWheel = false;
   bool _initializationFailed = false;
   String? _initializationError;
-  InputMode _inputMode = InputMode.typeAndWheel;
   static const int _maxHistoryItems = 10;
 
   @override
@@ -168,22 +164,6 @@ class _TTSScreenState extends State<TTSScreen> {
     _usageTracker?.trackWordUsage(word.text);
   }
 
-  void _onTapHoldStart() {
-    // Show suggestions when user holds
-    final tracker = _usageTracker;
-    if (tracker == null) return;
-
-    // Dismiss keyboard when wheel appears
-    FocusScope.of(context).unfocus();
-
-    final suggestions = tracker.getSuggestions('', limit: 12);
-
-    setState(() {
-      _showWheel = true;
-      _currentSuggestions = suggestions;
-    });
-  }
-
   Future<void> _onSpeak() async {
     final text = _textController.text.trim();
 
@@ -232,6 +212,11 @@ class _TTSScreenState extends State<TTSScreen> {
           await _speakSimple(text);
         }
       });
+
+      // Clear text box after successful playback
+      if (mounted) {
+        _textController.clear();
+      }
     } on TTSProviderException catch (e, stackTrace) {
       _logger.error('TTS Provider Error', error: e, stackTrace: stackTrace);
       if (mounted) {
@@ -400,16 +385,21 @@ class _TTSScreenState extends State<TTSScreen> {
         mimeType = 'audio/mpeg';
       }
 
-      await audioService.playQueue(
-        audioChunks,
-        mimeType: mimeType,
-        sampleRate: sampleRate,
-      );
+      // Combine all chunks into single audio
+      if (audioChunks.isNotEmpty) {
+        final combinedBytes = Uint8List.fromList(audioChunks.expand((x) => x).toList());
+        await audioService.play(combinedBytes, mimeType: mimeType, sampleRate: sampleRate);
+      }
     } else {
       // Fallback to concurrent generation for non-streaming providers
       final futures = chunks.map((chunk) => providerManager.generateSpeech(chunk));
       final audioChunks = await Future.wait(futures);
-      await audioService.playQueue(audioChunks);
+
+      // Combine and play
+      if (audioChunks.isNotEmpty) {
+        final combinedBytes = Uint8List.fromList(audioChunks.expand((x) => x).toList());
+        await audioService.play(combinedBytes);
+      }
     }
   }
 
@@ -529,6 +519,20 @@ class _TTSScreenState extends State<TTSScreen> {
     });
   }
 
+  /// Edit history item - removes cache and adds to text box
+  void _editHistoryItem(SpeechHistoryItem item) {
+    final currentText = _textController.text;
+    if (currentText.isEmpty) {
+      _textController.text = item.text;
+    } else {
+      // Append with space
+      _textController.text = '$currentText ${item.text}';
+    }
+    _textController.selection = TextSelection.collapsed(
+      offset: _textController.text.length,
+    );
+  }
+
   /// Add text to quick phrases
   Future<void> _addToQuickPhrases(String text, {Uint8List? cachedAudio}) async {
     final prefs = await SharedPreferences.getInstance();
@@ -629,6 +633,11 @@ class _TTSScreenState extends State<TTSScreen> {
       );
     }
 
+    // Detect device type and orientation
+    final mediaQuery = MediaQuery.of(context);
+    final isTablet = mediaQuery.size.width >= 600;
+    final isLandscape = mediaQuery.orientation == Orientation.landscape;
+
     return Scaffold(
       appBar: AppBar(
         title: Row(
@@ -646,24 +655,7 @@ class _TTSScreenState extends State<TTSScreen> {
           IconButton(
             icon: const Icon(Icons.chat_bubble_outline),
             tooltip: 'Quick Phrases',
-            onPressed: () async {
-              final providerManager = _providerManager;
-              final audioService = _audioService;
-
-              if (providerManager != null && audioService != null) {
-                await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => PhrasesScreen(
-                      providerManager: providerManager,
-                      audioService: audioService,
-                    ),
-                  ),
-                );
-              } else {
-                _showError('App not fully initialized');
-              }
-            },
+            onPressed: _navigateToPhrasesScreen,
           ),
           IconButton(
             icon: const Icon(Icons.settings),
@@ -689,397 +681,393 @@ class _TTSScreenState extends State<TTSScreen> {
         ],
       ),
       body: SafeArea(
-        child: Column(
-          children: [
-            // Mode selector
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.grey[300]!),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: _buildModeButton(
-                        'Type Only',
-                        Icons.keyboard,
-                        InputMode.typeOnly,
-                      ),
-                    ),
-                    Container(
-                      width: 1,
-                      height: 40,
-                      color: Colors.grey[300],
-                    ),
-                    Expanded(
-                      child: _buildModeButton(
-                        'Type & Wheel',
-                        Icons.edit,
-                        InputMode.typeAndWheel,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-            // Scrollable content area
-            Expanded(
-              child: SingleChildScrollView(
-                child: Column(
-                  children: [
-                    // Text input area with floating wheel
-                    SizedBox(
-                      height: 480, // Taller to fit the wheel without cutoff
-                      child: Stack(
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.all(16.0),
-                            child: Column(
-                              children: [
-                                // Text field with tap & hold gesture
-                                TextField(
-                                  key: _textFieldKey,
-                                  controller: _textController,
-                                  focusNode: _textFieldFocus,
-                                  maxLines: 3,
-                                  style: const TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                  decoration: InputDecoration(
-                                    hintText: _inputMode == InputMode.typeAndWheel
-                                        ? 'Type here or tap & hold...'
-                                        : 'Type here...',
-                                    hintStyle: TextStyle(
-                                      color: Colors.grey[400],
-                                      fontSize: 18,
-                                    ),
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                      borderSide: const BorderSide(width: 2),
-                                    ),
-                                    focusedBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                      borderSide: const BorderSide(
-                                        color: Colors.blue,
-                                        width: 2,
-                                      ),
-                                    ),
-                                    filled: true,
-                                    fillColor: Colors.grey[50],
-                                  ),
-                                ),
-
-                                // Word suggestions bar (shows in both modes when not showing wheel)
-                                if (_currentSuggestions.isNotEmpty && !_showWheel)
-                                  Container(
-                                    margin: const EdgeInsets.only(top: 8),
-                                    height: 50,
-                                    child: ListView.builder(
-                                      scrollDirection: Axis.horizontal,
-                                      itemCount: _currentSuggestions.take(8).length,
-                                      itemBuilder: (context, index) {
-                                        final word = _currentSuggestions[index];
-                                        return Padding(
-                                          padding: EdgeInsets.only(
-                                            right: 8.0,
-                                            left: index == 0 ? 0 : 0,
-                                          ),
-                                          child: Material(
-                                            color: Colors.white,
-                                            borderRadius: BorderRadius.circular(8),
-                                            elevation: 2,
-                                            child: InkWell(
-                                              onTap: () => _onWordSelected(word),
-                                              borderRadius: BorderRadius.circular(8),
-                                              child: Container(
-                                                padding: const EdgeInsets.symmetric(
-                                                  horizontal: 16,
-                                                  vertical: 12,
-                                                ),
-                                                decoration: BoxDecoration(
-                                                  border: Border.all(
-                                                    color: index == 0
-                                                        ? const Color(0xFF2563EB)
-                                                        : Colors.grey[300]!,
-                                                    width: index == 0 ? 2 : 1,
-                                                  ),
-                                                  borderRadius: BorderRadius.circular(8),
-                                                ),
-                                                child: Text(
-                                                  word.text,
-                                                  style: TextStyle(
-                                                    fontSize: 16,
-                                                    fontWeight: index == 0
-                                                        ? FontWeight.bold
-                                                        : FontWeight.normal,
-                                                    color: index == 0
-                                                        ? const Color(0xFF2563EB)
-                                                        : Colors.black87,
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        );
-                                      },
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-
-                          // Floating word wheel overlay - centered, ignores pointer when suggestions showing
-                          if (_inputMode == InputMode.typeAndWheel)
-                            Positioned(
-                              left: 0,
-                              right: 0,
-                              top: 40,
-                              child: IgnorePointer(
-                                ignoring: _currentSuggestions.isNotEmpty && !_showWheel,
-                                child: Container(
-                                  color: _showWheel ? Colors.black.withAlpha(15) : Colors.transparent,
-                                  height: 400,
-                                  alignment: Alignment.center,
-                                  child: Material(
-                                    elevation: _showWheel ? 12 : 0,
-                                    color: Colors.transparent,
-                                    borderRadius: BorderRadius.circular(200),
-                                    child: Container(
-                                      width: 400,
-                                      height: 400,
-                                      decoration: BoxDecoration(
-                                        color: _showWheel ? const Color(0xFFEAD4A4).withAlpha(180) : Colors.transparent,
-                                        borderRadius: BorderRadius.circular(200),
-                                      ),
-                                      child: _currentSuggestions.isNotEmpty
-                                          ? WordWheelWidget(
-                                              words: _currentSuggestions,
-                                              onWordSelected: _onWordSelected,
-                                              showEmpty: false,
-                                              onWheelShown: () {
-                                                FocusScope.of(context).unfocus();
-                                                setState(() {
-                                                  _showWheel = true;
-                                                });
-                                              },
-                                              onWheelHidden: () {
-                                                setState(() {
-                                                  _showWheel = false;
-                                                });
-                                                _textFieldFocus.requestFocus();
-                                              },
-                                              onTapWhenHidden: () {
-                                                _textFieldFocus.requestFocus();
-                                              },
-                                            )
-                                          : WordWheelWidget(
-                                              words: const [],
-                                              onWordSelected: _onWordSelected,
-                                              showEmpty: true,
-                                              onTapHoldStart: _onTapHoldStart,
-                                              onWheelShown: () {
-                                                FocusScope.of(context).unfocus();
-                                                setState(() {
-                                                  _showWheel = true;
-                                                });
-                                              },
-                                              onWheelHidden: () {
-                                                setState(() {
-                                                  _showWheel = false;
-                                                });
-                                                _textFieldFocus.requestFocus();
-                                              },
-                                              onTapWhenHidden: () {
-                                                _textFieldFocus.requestFocus();
-                                              },
-                                            ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-
-                    // History section
-                    if (_speechHistory.isNotEmpty) ...[
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                        child: Row(
-                          children: [
-                            Text(
-                              'Recent',
-                              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                    color: const Color(0xFF2563EB),
-                                  ),
-                            ),
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF2563EB),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                '${_speechHistory.length}',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      ListView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        itemCount: _speechHistory.length,
-                        itemBuilder: (context, index) {
-                          return _buildHistoryItem(_speechHistory[index]);
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-
-            // Speak button - pinned to bottom
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: SizedBox(
-                width: double.infinity,
-                height: 70,
-                child: ElevatedButton(
-                  onPressed: _isSpeaking ? null : _onSpeak,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2563EB), // Match primary blue
-                    foregroundColor: Colors.white,
-                    disabledBackgroundColor: Colors.grey[300],
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    elevation: 4,
-                  ),
-                  child: _isSpeaking
-                      ? const CircularProgressIndicator(
-                          color: Colors.white,
-                        )
-                      : const Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.volume_up, size: 32),
-                            SizedBox(width: 12),
-                            Text(
-                              'SPEAK NOW',
-                              style: TextStyle(
-                                fontSize: 24,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                ),
-              ),
-            ),
-          ],
+        child: GestureDetector(
+          onHorizontalDragEnd: (details) {
+            // Detect swipe velocity to determine if it's a swipe gesture
+            if (details.primaryVelocity != null) {
+              if (details.primaryVelocity!.abs() > 500) {
+                // Velocity threshold met - navigate to phrases screen
+                _navigateToPhrasesScreen();
+              }
+            }
+          },
+          child: isTablet
+              ? (isLandscape ? _buildTabletLandscapeLayout() : _buildTabletPortraitLayout())
+              : _buildPhoneLayout(),
         ),
       ),
     );
   }
 
-  Widget _buildModeButton(String label, IconData icon, InputMode mode) {
-    final isSelected = _inputMode == mode;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () {
-          setState(() {
-            _inputMode = mode;
-            // Hide wheel when switching to type-only mode
-            if (mode == InputMode.typeOnly) {
-              _showWheel = false;
-            }
-          });
-        },
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          decoration: BoxDecoration(
-            color: isSelected ? const Color(0xFF2563EB).withAlpha(25) : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
+  /// Navigate to phrases screen
+  Future<void> _navigateToPhrasesScreen() async {
+    final providerManager = _providerManager;
+    final audioService = _audioService;
+
+    if (providerManager != null && audioService != null) {
+      final phraseToEdit = await Navigator.push<String>(
+        context,
+        MaterialPageRoute(
+          builder: (context) => PhrasesScreen(
+            providerManager: providerManager,
+            audioService: audioService,
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+        ),
+      );
+
+      // If a phrase was selected for editing, add it to text box
+      if (phraseToEdit != null && mounted) {
+        final currentText = _textController.text;
+        if (currentText.isEmpty) {
+          _textController.text = phraseToEdit;
+        } else {
+          // Append with space
+          _textController.text = '$currentText $phraseToEdit';
+        }
+        _textController.selection = TextSelection.collapsed(
+          offset: _textController.text.length,
+        );
+      }
+    } else {
+      _showError('App not fully initialized');
+    }
+  }
+
+  /// Phone layout - vertical stack (current layout)
+  Widget _buildPhoneLayout() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Scrollable content area
+        Expanded(
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Text input area
+                _buildInputArea(),
+
+                // Word wheel
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  child: Center(child: _buildWordWheel()),
+                ),
+
+                const SizedBox(height: 16),
+
+                // History section
+                _buildPhrasesList(),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Tablet portrait layout - 2/3 left (input), 1/3 right (wheel top, phrases bottom)
+  Widget _buildTabletPortraitLayout() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Left side - Input area (2/3 width)
+        Expanded(
+          flex: 2,
+          child: SingleChildScrollView(
+            child: _buildInputArea(),
+          ),
+        ),
+
+        // Right side - Wheel and Phrases (1/3 width)
+        Expanded(
+          flex: 1,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(
-                icon,
-                size: 18,
-                color: isSelected ? const Color(0xFF2563EB) : Colors.grey[600],
+              // Word wheel (top half) - centered in quadrant
+              Expanded(
+                child: Center(child: _buildWordWheel()),
               ),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                  color: isSelected ? const Color(0xFF2563EB) : Colors.grey[600],
+
+              // Phrases list (bottom half) - flush left and top
+              Expanded(
+                child: Align(
+                  alignment: Alignment.topLeft,
+                  child: SingleChildScrollView(
+                    child: _buildPhrasesList(),
+                  ),
                 ),
               ),
             ],
           ),
         ),
+      ],
+    );
+  }
+
+  /// Tablet landscape layout - 2/3 top (input full width), 1/3 bottom (wheel left, phrases right)
+  Widget _buildTabletLandscapeLayout() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Top - Input area (2/3 height, full width) - flush top
+        Expanded(
+          flex: 2,
+          child: Align(
+            alignment: Alignment.topLeft,
+            child: SingleChildScrollView(
+              child: _buildInputArea(),
+            ),
+          ),
+        ),
+
+        // Bottom - Wheel and Phrases (1/3 height)
+        Expanded(
+          flex: 1,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Word wheel (left half) - centered in quadrant
+              Expanded(
+                child: Center(child: _buildWordWheel()),
+              ),
+
+              // Phrases list (right half) - flush left and top
+              Expanded(
+                child: Align(
+                  alignment: Alignment.topLeft,
+                  child: SingleChildScrollView(
+                    child: _buildPhrasesList(),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Build input area with text field, suggestions, and speak button
+  Widget _buildInputArea() {
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Text field
+          TextField(
+            key: _textFieldKey,
+            controller: _textController,
+            focusNode: _textFieldFocus,
+            maxLines: 6,
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w500,
+            ),
+            decoration: InputDecoration(
+              hintText: 'Type here...',
+              hintStyle: TextStyle(
+                color: Colors.grey[400],
+                fontSize: 18,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(width: 2),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(
+                  color: Colors.blue,
+                  width: 2,
+                ),
+              ),
+              filled: true,
+              fillColor: Colors.grey[50],
+            ),
+          ),
+
+          // Word suggestions bar - always reserve space for consistent layout
+          Container(
+            margin: const EdgeInsets.only(top: 8),
+            height: 50,
+            child: _currentSuggestions.isNotEmpty
+                ? ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _currentSuggestions.take(8).length,
+                    itemBuilder: (context, index) {
+                      final word = _currentSuggestions[index];
+                      return Padding(
+                        padding: EdgeInsets.only(
+                          right: 8.0,
+                          left: index == 0 ? 0 : 0,
+                        ),
+                        child: Material(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          elevation: 2,
+                          child: InkWell(
+                            onTap: () => _onWordSelected(word),
+                            borderRadius: BorderRadius.circular(8),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 12,
+                              ),
+                              decoration: BoxDecoration(
+                                border: Border.all(
+                                  color: index == 0
+                                      ? const Color(0xFF2563EB)
+                                      : Colors.grey[300]!,
+                                  width: index == 0 ? 2 : 1,
+                                ),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                word.text,
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: index == 0
+                                      ? FontWeight.bold
+                                      : FontWeight.normal,
+                                  color: index == 0
+                                      ? const Color(0xFF2563EB)
+                                      : Colors.black87,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  )
+                : const SizedBox.shrink(), // Empty space when no suggestions
+          ),
+
+          const SizedBox(height: 16),
+
+          // Speak button
+          SizedBox(
+            width: double.infinity,
+            height: 70,
+            child: ElevatedButton(
+              onPressed: _isSpeaking ? null : _onSpeak,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF2563EB),
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: Colors.grey[300],
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 4,
+              ),
+              child: _isSpeaking
+                  ? const CircularProgressIndicator(
+                      color: Colors.white,
+                    )
+                  : const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.volume_up, size: 32),
+                        SizedBox(width: 12),
+                        Text(
+                          'SPEAK NOW',
+                          style: TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildQuickButton(String text) {
-    return Expanded(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4.0),
-        child: ElevatedButton(
-          onPressed: () {
-            setState(() {
-              final currentText = _textController.text;
-              _textController.text = currentText.isEmpty
-                  ? text
-                  : '$currentText $text';
-              _textController.selection = TextSelection.collapsed(
-                offset: _textController.text.length,
-              );
-            });
-            _usageTracker?.trackWordUsage(text);
-          },
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFFF0F9FF), // Light blue tint
-            foregroundColor: const Color(0xFF1E3A8A), // Dark blue text
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
+  /// Build word wheel - scales to fill available area
+  Widget _buildWordWheel() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Calculate the size to fill the available space
+        // Use the smaller dimension to maintain aspect ratio
+        final size = constraints.maxHeight.isFinite && constraints.maxWidth.isFinite
+            ? (constraints.maxHeight < constraints.maxWidth
+                ? constraints.maxHeight
+                : constraints.maxWidth) * 0.9  // 90% of available space for padding
+            : 400.0;  // fallback size
+
+        return SizedBox(
+          width: size,
+          height: size,
+          child: WordWheelWidgetV2(
+            words: _currentSuggestions.isEmpty
+                ? (_usageTracker?.getSuggestions('', limit: 12) ?? [])
+                : _currentSuggestions,
+            onWordSelected: _onWordSelected,
+            onWheelShown: () {},
+            onWheelHidden: () {},
+            alwaysVisible: true,
           ),
-          child: Text(
-            text,
-            style: const TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
-            textAlign: TextAlign.center,
+        );
+      },
+    );
+  }
+
+  /// Build phrases/history list
+  Widget _buildPhrasesList() {
+    if (_speechHistory.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0),
+          child: Row(
+            children: [
+              Text(
+                'Recent',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: const Color(0xFF2563EB),
+                    ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2563EB),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '${_speechHistory.length}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
-      ),
+        const SizedBox(height: 8),
+        ListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          itemCount: _speechHistory.length,
+          itemBuilder: (context, index) {
+            return _buildHistoryItem(_speechHistory[index]);
+          },
+        ),
+        const SizedBox(height: 16),
+      ],
     );
   }
 
@@ -1170,6 +1158,20 @@ class _TTSScreenState extends State<TTSScreen> {
                     ],
                   ),
                 ),
+
+                // Edit button
+                IconButton(
+                  icon: const Icon(
+                    Icons.edit,
+                    color: Color(0xFF2563EB),
+                    size: AccessibilityConstants.standardIconSize,
+                  ),
+                  onPressed: () => _editHistoryItem(item),
+                  constraints: AccessibleTapTarget.minimum(),
+                  tooltip: 'Edit in text box',
+                ),
+
+                const SizedBox(width: AccessibilityConstants.minSpacing),
 
                 // Add to Quick Phrases button
                 IconButton(

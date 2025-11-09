@@ -10,6 +10,7 @@ class ConfigField {
   final bool isSecret;
   final bool isRequired;
   final String? defaultValue;
+  final List<String>? options; // If provided, renders as dropdown instead of text field
 
   const ConfigField({
     required this.key,
@@ -18,6 +19,7 @@ class ConfigField {
     this.isSecret = false,
     this.isRequired = true,
     this.defaultValue,
+    this.options,
   });
 }
 

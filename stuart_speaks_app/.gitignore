@@ -33,6 +33,12 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# iOS build artifacts
+**/ios/build/
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/**/Flutter/flutter_*.sh
+
 # Symbolication related
 app.*.symbols
 

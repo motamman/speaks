@@ -51,18 +51,33 @@ class ElevenLabsProvider extends TTSProvider {
         const ConfigField(
           key: 'modelId',
           label: 'Model ID',
-          hint: 'Model to use (e.g., eleven_multilingual_v2)',
+          hint: 'Model to use',
           isSecret: false,
           isRequired: false,
           defaultValue: 'eleven_multilingual_v2',
+          options: [
+            'eleven_multilingual_v2',
+            'eleven_turbo_v2_5',
+            'eleven_turbo_v2',
+            'eleven_flash_v2_5',
+            'eleven_english_sts_v2',
+          ],
         ),
         const ConfigField(
           key: 'outputFormat',
           label: 'Output Format',
-          hint: 'Audio format (e.g., mp3_44100_128)',
+          hint: 'Audio format',
           isSecret: false,
           isRequired: false,
           defaultValue: 'mp3_44100_128',
+          options: [
+            'mp3_44100_128',
+            'mp3_44100_192',
+            'pcm_16000',
+            'pcm_22050',
+            'pcm_24000',
+            'pcm_44100',
+          ],
         ),
         const ConfigField(
           key: 'stability',
@@ -91,10 +106,11 @@ class ElevenLabsProvider extends TTSProvider {
         const ConfigField(
           key: 'useSpeakerBoost',
           label: 'Speaker Boost',
-          hint: 'true or false',
+          hint: 'Enable speaker boost',
           isSecret: false,
           isRequired: false,
           defaultValue: 'true',
+          options: ['true', 'false'],
         ),
         const ConfigField(
           key: 'optimizeStreamingLatency',

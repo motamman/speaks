@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,9 +7,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/models/phrase.dart';
 import '../../core/services/audio_playback_service.dart';
 import '../../core/services/tts_provider_manager.dart';
-import '../../core/services/text_chunker.dart';
 import '../../core/services/app_logger.dart';
 import '../../core/services/error_handler.dart';
+import '../../core/services/phrase_exclusion_tracker.dart';
 import '../../core/utils/input_validator.dart';
 import '../../core/constants/accessibility_constants.dart';
 import '../../core/providers/tts_provider.dart';
@@ -35,9 +34,10 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
   final ErrorHandler _errorHandler = ErrorHandler();
 
   List<Phrase> _phrases = [];
-  Map<String, Uint8List?> _audioCache = {};
+  final Map<String, Uint8List?> _audioCache = {};
   bool _isLoading = true;
   String? _currentlySpeaking;
+  PhraseExclusionTracker? _exclusionTracker;
 
   @override
   void initState() {
@@ -49,26 +49,39 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
 
+      // Initialize exclusion tracker
+      _exclusionTracker = PhraseExclusionTracker(prefs);
+      await _exclusionTracker!.initialize();
+
       // Load cached audio from persistent storage
       await _loadAudioCache();
 
-      // Load custom phrases (user-modified list)
+      // Load default phrases from assets
+      final String jsonString = await rootBundle.loadString('assets/default_phrases.json');
+      final List<dynamic> defaultList = jsonDecode(jsonString);
+      final defaultPhrases = defaultList.map((e) => e.toString()).toList();
+
+      // Load custom phrases (user-added, not from defaults)
       final customPhrasesJson = prefs.getString('custom_phrases');
-      List<String> phrasesList;
+      List<String> customPhrases = [];
 
       if (customPhrasesJson != null) {
-        // Use custom list if available
         final List<dynamic> customList = jsonDecode(customPhrasesJson);
-        phrasesList = customList.map((e) => e.toString()).toList();
-      } else {
-        // Load default phrases from assets on first run
-        final String jsonString = await rootBundle.loadString('assets/default_phrases.json');
-        final List<dynamic> defaultList = jsonDecode(jsonString);
-        phrasesList = defaultList.map((e) => e.toString()).toList();
-
-        // Save as custom list
-        await prefs.setString('custom_phrases', jsonEncode(phrasesList));
+        customPhrases = customList.map((e) => e.toString()).toList();
       }
+
+      // Combine both lists, filtering out excluded phrases
+      final allPhrases = <String>[];
+
+      // Add default phrases that aren't excluded
+      for (final phrase in defaultPhrases) {
+        if (!_exclusionTracker!.isExcluded(phrase)) {
+          allPhrases.add(phrase);
+        }
+      }
+
+      // Add custom phrases
+      allPhrases.addAll(customPhrases);
 
       // Load usage counts from preferences
       final usageJson = prefs.getString('phrase_usage');
@@ -80,7 +93,7 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
       }
 
       setState(() {
-        _phrases = phrasesList
+        _phrases = allPhrases
             .map((text) => Phrase(
                   text: text,
                   usageCount: usageCounts[text] ?? 0,
@@ -102,8 +115,19 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
 
   Future<void> _savePhrases() async {
     final prefs = await SharedPreferences.getInstance();
-    final phrasesList = _phrases.map((p) => p.text).toList();
-    await prefs.setString('custom_phrases', jsonEncode(phrasesList));
+
+    // Load defaults to determine which are custom
+    final String jsonString = await rootBundle.loadString('assets/default_phrases.json');
+    final List<dynamic> defaultList = jsonDecode(jsonString);
+    final defaultPhrases = defaultList.map((e) => e.toString()).toSet();
+
+    // Only save custom (user-added) phrases
+    final customPhrases = _phrases
+        .map((p) => p.text)
+        .where((text) => !defaultPhrases.contains(text))
+        .toList();
+
+    await prefs.setString('custom_phrases', jsonEncode(customPhrases));
   }
 
   /// Load audio cache from persistent storage
@@ -142,10 +166,24 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
   }
 
   Future<void> _deletePhrase(Phrase phrase) async {
+    // Check if this is a default phrase
+    final String jsonString = await rootBundle.loadString('assets/default_phrases.json');
+    final List<dynamic> defaultList = jsonDecode(jsonString);
+    final defaultPhrases = defaultList.map((e) => e.toString()).toSet();
+
+    final isDefault = defaultPhrases.contains(phrase.text);
+
+    if (isDefault) {
+      // Exclude default phrase (hide it)
+      await _exclusionTracker?.exclude(phrase.text);
+    } else {
+      // Actually delete custom phrase
+      await _savePhrases();
+    }
+
     setState(() {
       _phrases.remove(phrase);
     });
-    await _savePhrases();
 
     // Also remove from audio cache (both memory and persistent)
     _audioCache.remove(phrase.text);
@@ -216,6 +254,67 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
         ],
       ),
     );
+  }
+
+  /// Replay phrase with fresh audio (removes cache first)
+  Future<void> _replayPhrase(Phrase phrase) async {
+    if (widget.providerManager.activeProvider == null) {
+      _showError('Please configure a TTS provider in settings first');
+      return;
+    }
+
+    setState(() {
+      _currentlySpeaking = phrase.text;
+    });
+
+    try {
+      // Remove cached audio
+      _audioCache.remove(phrase.text);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('phrase_audio_${phrase.text}');
+
+      // Generate fresh audio
+      _logger.info('Generating fresh speech for: ${phrase.text}');
+      final audioBytes = await widget.providerManager.generateSpeech(phrase.text);
+      _audioCache[phrase.text] = audioBytes;
+
+      // Save to persistent storage
+      await _saveAudioToCache(phrase.text, audioBytes);
+      _logger.debug('Cached fresh audio for: ${phrase.text}');
+
+      await widget.audioService.play(audioBytes);
+
+      // Track usage
+      await _trackUsage(phrase);
+    } on TTSProviderException catch (e, stackTrace) {
+      _logger.error('TTS Provider Error', error: e, stackTrace: stackTrace);
+      if (mounted) {
+        _errorHandler.showErrorSnackbar(context, e, stackTrace: stackTrace);
+      }
+    } catch (e, stackTrace) {
+      _logger.error('Unexpected error replaying phrase', error: e, stackTrace: stackTrace);
+      if (mounted) {
+        _errorHandler.showErrorSnackbar(context, e, stackTrace: stackTrace);
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _currentlySpeaking = null;
+        });
+      }
+    }
+  }
+
+  /// Edit phrase - removes cache and returns to main screen with phrase in text box
+  void _editPhrase(Phrase phrase) {
+    // Remove cached audio
+    _audioCache.remove(phrase.text);
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.remove('phrase_audio_${phrase.text}');
+    });
+
+    // Return to main screen with phrase text
+    Navigator.pop(context, phrase.text);
   }
 
   Future<void> _speakPhrase(Phrase phrase) async {
@@ -392,6 +491,15 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
           ),
           child: Stack(
             children: [
+              // Faint play icon background
+              Center(
+                child: Icon(
+                  Icons.play_circle_outline,
+                  size: 80,
+                  color: Colors.grey.withValues(alpha: 0.1),
+                ),
+              ),
+
               // Main content
               Center(
                 child: isSpeaking
@@ -460,6 +568,8 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
   }
 
   void _showPhraseOptions(Phrase phrase) {
+    final hasCache = _audioCache.containsKey(phrase.text);
+
     showModalBottomSheet(
       context: context,
       builder: (context) => SafeArea(
@@ -467,8 +577,27 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
+              leading: const Icon(Icons.edit, color: Color(0xFF2563EB)),
+              title: const Text('Edit in Text Box'),
+              minVerticalPadding: AccessibilityConstants.comfortableSpacing,
+              onTap: () {
+                Navigator.pop(context);
+                _editPhrase(phrase);
+              },
+            ),
+            if (hasCache)
+              ListTile(
+                leading: const Icon(Icons.refresh, color: Color(0xFF2563EB)),
+                title: const Text('Replay (Remove Cache)'),
+                minVerticalPadding: AccessibilityConstants.comfortableSpacing,
+                onTap: () {
+                  Navigator.pop(context);
+                  _replayPhrase(phrase);
+                },
+              ),
+            ListTile(
               leading: const Icon(Icons.delete, color: Colors.red),
-              title: const Text('Delete Phrase'),
+              title: const Text('Delete/Hide Phrase'),
               minVerticalPadding: AccessibilityConstants.comfortableSpacing,
               onTap: () {
                 Navigator.pop(context);

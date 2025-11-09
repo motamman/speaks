@@ -49,18 +49,20 @@ class FishAudioProvider extends TTSProvider {
         const ConfigField(
           key: 'format',
           label: 'Audio Format',
-          hint: 'mp3 or opus',
+          hint: 'Audio output format',
           isSecret: false,
           isRequired: false,
           defaultValue: 'mp3',
+          options: ['mp3', 'opus', 'wav', 'pcm'],
         ),
         const ConfigField(
           key: 'bitrate',
           label: 'MP3 Bitrate',
-          hint: '128, 192, 256, or 320',
+          hint: 'Audio quality in kbps',
           isSecret: false,
           isRequired: false,
           defaultValue: '128',
+          options: ['64', '128', '192'],
         ),
         const ConfigField(
           key: 'temperature',
@@ -81,10 +83,11 @@ class FishAudioProvider extends TTSProvider {
         const ConfigField(
           key: 'latency',
           label: 'Latency Mode',
-          hint: 'normal or balanced',
+          hint: 'Quality vs speed tradeoff',
           isSecret: false,
           isRequired: false,
           defaultValue: 'normal',
+          options: ['normal', 'balanced'],
         ),
         const ConfigField(
           key: 'useStreaming',

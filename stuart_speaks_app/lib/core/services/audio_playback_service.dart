@@ -1,92 +1,109 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
-import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_sound/flutter_sound.dart';
 import 'package:path_provider/path_provider.dart';
 
-/// Service for playing TTS audio with queue management
+/// Service for playing TTS audio with streaming support using flutter_sound
+/// Supports true low-latency PCM streaming for AAC communication
 class AudioPlaybackService {
-  final AudioPlayer _player = AudioPlayer();
-  final List<Uint8List> _queue = [];
+  FlutterSoundPlayer? _player;
+  bool _isInitialized = false;
   bool _isPlaying = false;
   bool _isPaused = false;
+  bool _isStreaming = false;
+  File? _currentTempFile;
 
-  StreamController<PlayerState>? _stateController;
-  StreamController<Duration>? _positionController;
-  StreamController<Duration>? _durationController;
+  // Stream controllers for state
+  final _stateController = StreamController<PlaybackState>.broadcast();
+  final _positionController = StreamController<Duration>.broadcast();
 
   AudioPlaybackService() {
-    _initializePlayer();
+    _initialize();
   }
 
-  void _initializePlayer() {
-    // Listen to player state changes
-    _player.onPlayerStateChanged.listen((state) {
-      _stateController?.add(state);
-      if (state == PlayerState.completed) {
-        _playNextInQueue();
-      }
-    });
-
-    // Listen to position changes
-    _player.onPositionChanged.listen((position) {
-      _positionController?.add(position);
-    });
-
-    // Listen to duration changes
-    _player.onDurationChanged.listen((duration) {
-      _durationController?.add(duration);
-    });
-  }
-
-  /// Stream of player state changes
-  Stream<PlayerState> get onPlayerStateChanged {
-    _stateController ??= StreamController<PlayerState>.broadcast();
-    return _stateController!.stream;
-  }
-
-  /// Stream of position changes
-  Stream<Duration> get onPositionChanged {
-    _positionController ??= StreamController<Duration>.broadcast();
-    return _positionController!.stream;
-  }
-
-  /// Stream of duration changes
-  Stream<Duration> get onDurationChanged {
-    _durationController ??= StreamController<Duration>.broadcast();
-    return _durationController!.stream;
-  }
-
-  /// Play audio from bytes
-  Future<void> play(Uint8List audioBytes, {String? mimeType, int? sampleRate}) async {
-    await stop(); // Stop any current playback
-    _queue.clear();
-
-    _isPlaying = true;
-    _isPaused = false;
-
+  /// Initialize the player
+  Future<void> _initialize() async {
     try {
-      // Detect MIME type from audio header if not provided
-      final detectedMimeType = mimeType ?? _detectMimeType(audioBytes);
+      _player = FlutterSoundPlayer();
+      await _player!.openPlayer();
+      await _player!.setSubscriptionDuration(const Duration(milliseconds: 100));
 
-      // Log for debugging
-      if (kDebugMode) {
-        debugPrint('AudioPlaybackService: Playing audio - ${audioBytes.length} bytes, MIME: $detectedMimeType');
-        debugPrint('AudioPlaybackService: First 16 bytes: ${audioBytes.take(16).toList()}');
-      }
-
-      // On Android, use file-based approach directly (more reliable)
-      if (Platform.isAndroid) {
-        if (kDebugMode) {
-          debugPrint('AudioPlaybackService: Using file-based playback on Android');
+      // Listen to player state
+      _player!.onProgress!.listen((event) {
+        if (event.position != null) {
+          _positionController.add(event.position!);
         }
-        await _playFromFile(audioBytes, detectedMimeType, sampleRate);
-      } else {
-        await _player.play(BytesSource(audioBytes, mimeType: detectedMimeType));
+      });
+
+      _isInitialized = true;
+      if (kDebugMode) {
+        debugPrint('AudioPlaybackService: Initialized flutter_sound player');
       }
     } catch (e) {
+      if (kDebugMode) {
+        debugPrint('AudioPlaybackService: Initialization error: $e');
+      }
+      rethrow;
+    }
+  }
+
+  /// Stream of playback state changes
+  Stream<PlaybackState> get onStateChanged => _stateController.stream;
+
+  /// Stream of position changes
+  Stream<Duration> get onPositionChanged => _positionController.stream;
+
+  /// Play complete audio from bytes (non-streaming)
+  Future<void> play(Uint8List audioBytes, {String? mimeType, int? sampleRate}) async {
+    if (!_isInitialized || _player == null) {
+      throw Exception('AudioPlaybackService not initialized');
+    }
+
+    await stop(); // Stop any current playback
+
+    try {
+      final detectedMimeType = mimeType ?? _detectMimeType(audioBytes);
+
+      if (kDebugMode) {
+        debugPrint('AudioPlaybackService: Playing ${audioBytes.length} bytes, MIME: $detectedMimeType');
+      }
+
+      _isPlaying = true;
+      _isPaused = false;
+      _stateController.add(PlaybackState.playing);
+
+      // Convert PCM to WAV if needed
+      Uint8List playableData = audioBytes;
+      Codec codec = _getCodecForMimeType(detectedMimeType);
+
+      if (detectedMimeType == 'audio/pcm') {
+        final pcmSampleRate = sampleRate ?? 44100;
+        playableData = _convertPcmToWav(audioBytes, sampleRate: pcmSampleRate);
+        codec = Codec.pcm16WAV;
+      }
+
+      // Write to temp file (flutter_sound requires file path)
+      final tempDir = await getTemporaryDirectory();
+      _currentTempFile = File('${tempDir.path}/tts_${DateTime.now().millisecondsSinceEpoch}.wav');
+      await _currentTempFile!.writeAsBytes(playableData);
+
+      await _player!.startPlayer(
+        fromURI: _currentTempFile!.path,
+        codec: codec,
+      );
+
+      // Listen for completion
+      _player!.onProgress!.listen((event) {
+        if (event.duration != Duration.zero && event.position >= event.duration) {
+          _onPlaybackComplete();
+        }
+      });
+    } catch (e) {
       _isPlaying = false;
+      _stateController.add(PlaybackState.stopped);
       if (kDebugMode) {
         debugPrint('AudioPlaybackService: Playback error: $e');
       }
@@ -94,79 +111,165 @@ class AudioPlaybackService {
     }
   }
 
-  /// File-based playback (more reliable on Android)
-  Future<void> _playFromFile(Uint8List audioBytes, String? mimeType, int? sampleRate) async {
-    final tempDir = await getTemporaryDirectory();
-    final extension = _getFileExtension(mimeType);
-    final tempFile = File('${tempDir.path}/tts_audio_${DateTime.now().millisecondsSinceEpoch}$extension');
+  /// Start streaming PCM audio chunks (true low-latency streaming)
+  Future<void> startStreaming({int sampleRate = 44100, int channels = 1}) async {
+    if (!_isInitialized || _player == null) {
+      throw Exception('AudioPlaybackService not initialized');
+    }
 
-    // Fix WAV header if needed (some providers return invalid size fields)
-    Uint8List finalAudioBytes = audioBytes;
-    if (mimeType == 'audio/wav' && audioBytes.length > 44) {
-      finalAudioBytes = _fixWavHeader(audioBytes);
-    } else if (mimeType == 'audio/pcm') {
-      // Convert raw PCM to WAV (Android can't play raw PCM files)
-      // Use the provided sample rate or default to 44100 Hz
-      final pcmSampleRate = sampleRate ?? 44100;
-      finalAudioBytes = _convertPcmToWav(
-        audioBytes,
-        sampleRate: pcmSampleRate,
-        bitsPerSample: 16,
+    await stop(); // Stop any current playback
+
+    try {
+      if (kDebugMode) {
+        debugPrint('AudioPlaybackService: Starting PCM stream - $sampleRate Hz, $channels ch');
+      }
+
+      _isPlaying = true;
+      _isPaused = false;
+      _isStreaming = true;
+      _stateController.add(PlaybackState.playing);
+
+      // Start player in streaming mode with PCM16
+      await _player!.startPlayerFromStream(
+        codec: Codec.pcm16,
+        numChannels: channels,
+        sampleRate: sampleRate,
+        bufferSize: 8192, // Buffer size for streaming (8KB chunks)
+        interleaved: true, // PCM data is interleaved (standard format)
       );
+    } catch (e) {
+      _isPlaying = false;
+      _isStreaming = false;
+      _stateController.add(PlaybackState.stopped);
+      if (kDebugMode) {
+        debugPrint('AudioPlaybackService: Stream start error: $e');
+      }
+      rethrow;
+    }
+  }
+
+  /// Feed a PCM audio chunk to the stream
+  Future<void> feedChunk(Uint8List pcmData) async {
+    if (!_isStreaming || _player == null) {
+      if (kDebugMode) {
+        debugPrint('AudioPlaybackService: Cannot feed chunk - not streaming');
+      }
+      return;
     }
 
-    await tempFile.writeAsBytes(finalAudioBytes);
-    if (kDebugMode) {
-      debugPrint('AudioPlaybackService: Playing from temp file: ${tempFile.path}');
+    try {
+      await _player!.feedFromStream(pcmData);
+
+      if (kDebugMode) {
+        debugPrint('AudioPlaybackService: Fed ${pcmData.length} bytes to stream');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('AudioPlaybackService: Error feeding chunk: $e');
+      }
     }
+  }
 
-    await _player.play(DeviceFileSource(tempFile.path));
-
-    // Clean up temp file after a delay (ensure playback has started)
-    Future.delayed(const Duration(seconds: 3), () {
+  /// Stop streaming and close the stream
+  /// Waits for buffer to drain before stopping to prevent clipping
+  Future<void> stopStreaming({bool immediate = false}) async {
+    if (_isStreaming && _player != null) {
       try {
-        if (tempFile.existsSync()) {
-          tempFile.deleteSync();
+        if (!immediate) {
+          // Wait for audio buffer to drain (prevents clipping last syllable)
+          // Buffer size is 8KB, at 44100Hz 16-bit mono = 88200 bytes/sec
+          // 8KB = ~90ms of audio. Wait 200ms to be safe.
+          await Future.delayed(const Duration(milliseconds: 200));
+
           if (kDebugMode) {
-            debugPrint('AudioPlaybackService: Cleaned up temp file');
+            debugPrint('AudioPlaybackService: Buffer drained, stopping stream');
           }
         }
-      } catch (e) {
-        // Ignore cleanup errors
+
+        // Stop the streaming player
+        await _player!.stopPlayer();
+        _isStreaming = false;
+
         if (kDebugMode) {
-          debugPrint('AudioPlaybackService: Error cleaning up temp file: $e');
+          debugPrint('AudioPlaybackService: Stopped streaming');
+        }
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('AudioPlaybackService: Error stopping stream: $e');
         }
       }
-    });
-  }
-
-  String _getFileExtension(String? mimeType) {
-    switch (mimeType) {
-      case 'audio/mpeg':
-      case 'audio/mp3':
-        return '.mp3';
-      case 'audio/wav':
-      case 'audio/wave':
-      case 'audio/pcm':
-        return '.wav'; // PCM will be converted to WAV
-      case 'audio/ogg':
-        return '.ogg';
-      case 'audio/flac':
-        return '.flac';
-      case 'audio/mp4':
-      case 'audio/aac':
-        return '.m4a';
-      default:
-        return '.wav'; // Default to wav for unknown formats
     }
   }
 
-  /// Convert raw PCM to WAV format (Android requires proper headers)
-  /// Note: Cartesia default is pcm_s16le (16-bit signed little-endian) at 44100 Hz, mono
-  Uint8List _convertPcmToWav(Uint8List pcmData, {int sampleRate = 44100, int channels = 1, int bitsPerSample = 16}) {
+  /// Pause playback
+  Future<void> pause() async {
+    if (_isPlaying && !_isPaused && _player != null) {
+      await _player!.pausePlayer();
+      _isPaused = true;
+      _stateController.add(PlaybackState.paused);
+    }
+  }
+
+  /// Resume playback
+  Future<void> resume() async {
+    if (_isPlaying && _isPaused && _player != null) {
+      await _player!.resumePlayer();
+      _isPaused = false;
+      _stateController.add(PlaybackState.playing);
+    }
+  }
+
+  /// Stop playback
+  Future<void> stop() async {
+    if (_player != null) {
+      try {
+        // If streaming, stop immediately (user initiated)
+        if (_isStreaming) {
+          await stopStreaming(immediate: true);
+        } else {
+          await _player!.stopPlayer();
+        }
+
+        _isPlaying = false;
+        _isPaused = false;
+        _isStreaming = false;
+        _stateController.add(PlaybackState.stopped);
+
+        // Clean up temp file
+        if (_currentTempFile != null && await _currentTempFile!.exists()) {
+          await _currentTempFile!.delete();
+          _currentTempFile = null;
+        }
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('AudioPlaybackService: Error stopping: $e');
+        }
+      }
+    }
+  }
+
+  void _onPlaybackComplete() {
+    _isPlaying = false;
+    _isPaused = false;
+    _stateController.add(PlaybackState.completed);
+
     if (kDebugMode) {
-      debugPrint('AudioPlaybackService: Converting PCM to WAV - ${pcmData.length} bytes, $sampleRate Hz, $channels ch, $bitsPerSample bit');
+      debugPrint('AudioPlaybackService: Playback completed');
     }
+
+    // Clean up temp file
+    if (_currentTempFile != null) {
+      _currentTempFile!.delete().catchError((e) {
+        if (kDebugMode) {
+          debugPrint('AudioPlaybackService: Error deleting temp file: $e');
+        }
+      });
+      _currentTempFile = null;
+    }
+  }
+
+  /// Convert raw PCM to WAV format
+  Uint8List _convertPcmToWav(Uint8List pcmData, {int sampleRate = 44100, int channels = 1, int bitsPerSample = 16}) {
     final dataSize = pcmData.length;
     final fileSize = 36 + dataSize;
 
@@ -188,12 +291,12 @@ class AudioPlaybackService {
     header.setUint8(13, 0x6D); // m
     header.setUint8(14, 0x74); // t
     header.setUint8(15, 0x20); // space
-    header.setUint32(16, 16, Endian.little); // fmt chunk size
-    header.setUint16(20, 1, Endian.little); // audio format (1 = PCM)
+    header.setUint32(16, 16, Endian.little);
+    header.setUint16(20, 1, Endian.little); // PCM
     header.setUint16(22, channels, Endian.little);
     header.setUint32(24, sampleRate, Endian.little);
-    header.setUint32(28, sampleRate * channels * (bitsPerSample ~/ 8), Endian.little); // byte rate
-    header.setUint16(32, channels * (bitsPerSample ~/ 8), Endian.little); // block align
+    header.setUint32(28, sampleRate * channels * (bitsPerSample ~/ 8), Endian.little);
+    header.setUint16(32, channels * (bitsPerSample ~/ 8), Endian.little);
     header.setUint16(34, bitsPerSample, Endian.little);
 
     // data chunk
@@ -203,189 +306,83 @@ class AudioPlaybackService {
     header.setUint8(39, 0x61); // a
     header.setUint32(40, dataSize, Endian.little);
 
-    // Combine header and PCM data
     final wavData = Uint8List(44 + dataSize);
     wavData.setRange(0, 44, header.buffer.asUint8List());
     wavData.setRange(44, 44 + dataSize, pcmData);
 
-    if (kDebugMode) {
-      debugPrint('AudioPlaybackService: Converted raw PCM to WAV (${pcmData.length} bytes)');
-    }
-
     return wavData;
   }
 
-  /// Fix WAV header with proper file size (some streaming APIs return 0xFFFFFFFF)
-  Uint8List _fixWavHeader(Uint8List wavData) {
-    // Check if it's a valid RIFF/WAVE file
-    if (wavData.length < 44 ||
-        wavData[0] != 0x52 || wavData[1] != 0x49 || wavData[2] != 0x46 || wavData[3] != 0x46 || // RIFF
-        wavData[8] != 0x57 || wavData[9] != 0x41 || wavData[10] != 0x56 || wavData[11] != 0x45) { // WAVE
-      return wavData; // Not a WAV file, return as-is
-    }
-
-    // Create a mutable copy
-    final fixedData = Uint8List.fromList(wavData);
-
-    // Calculate actual file size
-    final fileSize = wavData.length - 8; // Total size minus 8 bytes for RIFF header
-
-    // Fix RIFF chunk size (bytes 4-7)
-    fixedData[4] = fileSize & 0xFF;
-    fixedData[5] = (fileSize >> 8) & 0xFF;
-    fixedData[6] = (fileSize >> 16) & 0xFF;
-    fixedData[7] = (fileSize >> 24) & 0xFF;
-
-    // Find and fix data chunk size if it's also 0xFFFFFFFF
-    for (int i = 12; i < wavData.length - 8; i++) {
-      // Look for 'data' chunk (0x64 0x61 0x74 0x61)
-      if (wavData[i] == 0x64 && wavData[i + 1] == 0x61 &&
-          wavData[i + 2] == 0x74 && wavData[i + 3] == 0x61) {
-        // Data chunk size is at i+4 to i+7
-        final dataSize = wavData.length - i - 8;
-        fixedData[i + 4] = dataSize & 0xFF;
-        fixedData[i + 5] = (dataSize >> 8) & 0xFF;
-        fixedData[i + 6] = (dataSize >> 16) & 0xFF;
-        fixedData[i + 7] = (dataSize >> 24) & 0xFF;
-        break;
-      }
-    }
-
-    if (kDebugMode) {
-      debugPrint('AudioPlaybackService: Fixed WAV header (size: ${wavData.length} bytes)');
-    }
-
-    return fixedData;
-  }
-
   /// Detect MIME type from audio file header
-  String? _detectMimeType(Uint8List bytes) {
-    if (bytes.length < 12) return 'audio/pcm'; // Default to raw PCM for small chunks
+  String _detectMimeType(Uint8List bytes) {
+    if (bytes.length < 12) return 'audio/pcm';
 
-    // Check for MP3 (ID3 or FF FB/FF F3/FF F2)
-    if ((bytes[0] == 0x49 && bytes[1] == 0x44 && bytes[2] == 0x33) || // ID3
-        (bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0)) { // MPEG sync
+    // Check for MP3
+    if ((bytes[0] == 0x49 && bytes[1] == 0x44 && bytes[2] == 0x33) ||
+        (bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0)) {
       return 'audio/mpeg';
     }
 
-    // Check for WAV (RIFF....WAVE)
+    // Check for WAV
     if (bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46 &&
         bytes[8] == 0x57 && bytes[9] == 0x41 && bytes[10] == 0x56 && bytes[11] == 0x45) {
       return 'audio/wav';
     }
 
-    // Check for OGG (OggS)
+    // Check for OGG
     if (bytes[0] == 0x4F && bytes[1] == 0x67 && bytes[2] == 0x67 && bytes[3] == 0x53) {
       return 'audio/ogg';
     }
 
-    // Check for FLAC (fLaC)
+    // Check for FLAC
     if (bytes[0] == 0x66 && bytes[1] == 0x4C && bytes[2] == 0x61 && bytes[3] == 0x43) {
       return 'audio/flac';
     }
 
-    // Check for M4A/AAC (ftyp)
-    if (bytes.length > 8 && bytes[4] == 0x66 && bytes[5] == 0x74 && bytes[6] == 0x79 && bytes[7] == 0x70) {
-      return 'audio/mp4';
-    }
-
-    // If none of the above, likely raw PCM from streaming
     return 'audio/pcm';
   }
 
-  /// Play multiple audio chunks in sequence
-  Future<void> playQueue(List<Uint8List> audioChunks, {String? mimeType, int? sampleRate}) async {
-    if (audioChunks.isEmpty) return;
-
-    await stop();
-    _queue.clear();
-    _queue.addAll(audioChunks);
-
-    _isPlaying = true;
-    _isPaused = false;
-
-    // Detect MIME type from first chunk
-    final detectedMimeType = mimeType ?? _detectMimeType(_queue.first);
-
-    // Play first chunk using appropriate method for platform
-    try {
-      final firstChunk = _queue.removeAt(0);
-      if (Platform.isAndroid) {
-        await _playFromFile(firstChunk, detectedMimeType, sampleRate);
-      } else {
-        await _player.play(BytesSource(firstChunk, mimeType: detectedMimeType));
-      }
-    } catch (e) {
-      _isPlaying = false;
-      _queue.clear();
-      rethrow;
-    }
-  }
-
-  /// Play next chunk in queue
-  Future<void> _playNextInQueue() async {
-    if (_queue.isEmpty) {
-      _isPlaying = false;
-      return;
-    }
-
-    try {
-      final audioBytes = _queue.removeAt(0);
-      final mimeType = _detectMimeType(audioBytes);
-
-      // Use appropriate method for platform
-      if (Platform.isAndroid) {
-        await _playFromFile(audioBytes, mimeType, null);
-      } else {
-        await _player.play(BytesSource(audioBytes, mimeType: mimeType));
-      }
-    } catch (e) {
-      _isPlaying = false;
-      _queue.clear();
-      rethrow;
-    }
-  }
-
-  /// Pause playback
-  Future<void> pause() async {
-    if (_isPlaying && !_isPaused) {
-      await _player.pause();
-      _isPaused = true;
-    }
-  }
-
-  /// Resume playback
-  Future<void> resume() async {
-    if (_isPlaying && _isPaused) {
-      await _player.resume();
-      _isPaused = false;
-    }
-  }
-
-  /// Stop playback
-  Future<void> stop() async {
-    await _player.stop();
-    _queue.clear();
-    _isPlaying = false;
-    _isPaused = false;
-  }
-
-  /// Replay the current audio (if any)
-  Future<void> replay() async {
-    if (_isPlaying) {
-      await _player.seek(Duration.zero);
+  /// Get flutter_sound codec for MIME type
+  Codec _getCodecForMimeType(String mimeType) {
+    switch (mimeType) {
+      case 'audio/mpeg':
+      case 'audio/mp3':
+        return Codec.mp3;
+      case 'audio/wav':
+      case 'audio/wave':
+        return Codec.pcm16WAV;
+      case 'audio/pcm':
+        return Codec.pcm16;
+      case 'audio/ogg':
+        return Codec.opusOGG;
+      case 'audio/flac':
+        return Codec.flac;
+      case 'audio/aac':
+        return Codec.aacADTS;
+      default:
+        return Codec.pcm16WAV;
     }
   }
 
   /// Get current player state
   bool get isPlaying => _isPlaying && !_isPaused;
   bool get isPaused => _isPaused;
+  bool get isStreaming => _isStreaming;
 
   /// Clean up resources
-  void dispose() {
-    _player.dispose();
-    _stateController?.close();
-    _positionController?.close();
-    _durationController?.close();
+  Future<void> dispose() async {
+    await stop();
+    await _player?.closePlayer();
+    await _stateController.close();
+    await _positionController.close();
+    _player = null;
   }
+}
+
+/// Playback state enum
+enum PlaybackState {
+  stopped,
+  playing,
+  paused,
+  completed,
 }

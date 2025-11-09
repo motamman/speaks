@@ -60,30 +60,34 @@ class _WordWheelWidgetState extends State<WordWheelWidget> {
     // Use single gesture detector for both states to maintain gesture continuity
     // When hidden: translucent allows taps through to TextField while still detecting long press
     // When visible: opaque captures all gestures
-    return GestureDetector(
-      behavior: _isVisible ? HitTestBehavior.opaque : HitTestBehavior.translucent,
-      onTapDown: _onTapDown,
-      onTapUp: _onTapUp,
-      onLongPressStart: _onLongPressStart,
-      onLongPressMoveUpdate: _onDragUpdate,
-      onLongPressEnd: _onDragEnd,
-      child: Visibility(
-        visible: _isVisible || _isHolding,
-        maintainState: true,
-        maintainAnimation: true,
-        maintainSize: false,
-        child: widget.showEmpty && widget.words.isEmpty
-            ? _buildEmptyStateDisplay()
-            : CustomPaint(
-                painter: WheelPainter(
-                  words: _getVisibleWords(),
-                  isExpanded: _isExpanded,
-                  hoveredWord: _hoveredWord,
-                  dragPosition: _dragPosition,
-                  isHolding: _isHolding,
+    return SizedBox(
+      width: 400,
+      height: 400,
+      child: GestureDetector(
+        behavior: _isVisible ? HitTestBehavior.opaque : HitTestBehavior.translucent,
+        onTapDown: _onTapDown,
+        onTapUp: _onTapUp,
+        onLongPressStart: _onLongPressStart,
+        onLongPressMoveUpdate: _onDragUpdate,
+        onLongPressEnd: _onDragEnd,
+        child: Visibility(
+          visible: _isVisible || _isHolding,
+          maintainState: true,
+          maintainAnimation: true,
+          maintainSize: false,
+          child: widget.showEmpty && widget.words.isEmpty
+              ? _buildEmptyStateDisplay()
+              : CustomPaint(
+                  painter: WheelPainter(
+                    words: _getVisibleWords(),
+                    isExpanded: _isExpanded,
+                    hoveredWord: _hoveredWord,
+                    dragPosition: _dragPosition,
+                    isHolding: _isHolding,
+                  ),
+                  size: const Size(400, 400),
                 ),
-                size: const Size(400, 400),
-              ),
+        ),
       ),
     );
   }

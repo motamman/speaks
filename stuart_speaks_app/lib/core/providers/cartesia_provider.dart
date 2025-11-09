@@ -52,50 +52,56 @@ class CartesiaProvider extends TTSProvider {
         const ConfigField(
           key: 'modelId',
           label: 'Model ID',
-          hint: 'Model to use (e.g., sonic-3)',
+          hint: 'Model to use',
           isSecret: false,
           isRequired: false,
           defaultValue: 'sonic-3',
+          options: ['sonic', 'sonic-turbo', 'sonic-2', 'sonic-3'],
         ),
         const ConfigField(
           key: 'container',
           label: 'Audio Container',
-          hint: 'mp3, wav, or raw',
+          hint: 'Audio format container',
           isSecret: false,
           isRequired: false,
           defaultValue: 'mp3',
+          options: ['mp3', 'wav', 'raw'],
         ),
         const ConfigField(
           key: 'encoding',
           label: 'Audio Encoding',
-          hint: 'For WAV: pcm_s16le, pcm_f32le, mulaw',
+          hint: 'For WAV format',
           isSecret: false,
           isRequired: false,
           defaultValue: 'pcm_s16le',
+          options: ['pcm_s16le', 'pcm_f32le', 'mulaw'],
         ),
         const ConfigField(
           key: 'sampleRate',
           label: 'Sample Rate',
-          hint: '8000, 16000, 22050, 24000, or 44100',
+          hint: 'Audio sample rate in Hz',
           isSecret: false,
           isRequired: false,
           defaultValue: '44100',
+          options: ['8000', '16000', '22050', '24000', '44100'],
         ),
         const ConfigField(
           key: 'language',
           label: 'Language',
-          hint: 'Language code (e.g., en, es, fr)',
+          hint: 'Language code',
           isSecret: false,
           isRequired: false,
           defaultValue: 'en',
+          options: ['en', 'es', 'fr', 'de', 'it', 'pt', 'pl', 'tr', 'ru', 'nl', 'cs', 'ar', 'zh', 'ja', 'ko', 'hi'],
         ),
         const ConfigField(
           key: 'speed',
           label: 'Speed',
-          hint: 'fastest, fast, normal, slow, slowest (or 0.5-2.0)',
+          hint: 'Speech speed preset',
           isSecret: false,
           isRequired: false,
           defaultValue: 'normal',
+          options: ['slowest', 'slow', 'normal', 'fast', 'fastest'],
         ),
         const ConfigField(
           key: 'speedValue',
@@ -345,8 +351,6 @@ class CartesiaProvider extends TTSProvider {
         if (streamedResponse.statusCode == 200 || streamedResponse.statusCode == 204) {
           // Process Server-Sent Events stream - parse SSE format
           String buffer = '';
-          int eventCount = 0;
-          int audioByteCount = 0;
 
           await for (final chunk in streamedResponse.stream) {
             // Convert chunk to string and add to buffer
@@ -358,22 +362,13 @@ class CartesiaProvider extends TTSProvider {
               final event = buffer.substring(0, eventEnd);
               buffer = buffer.substring(eventEnd + 2);
 
-              eventCount++;
-              if (eventCount <= 3) {
-                print('SSE Event #$eventCount: ${event.substring(0, event.length > 100 ? 100 : event.length)}...');
-              }
-
               // Parse SSE event to extract audio data
               final audioData = _parseSSEEvent(event);
               if (audioData != null && audioData.isNotEmpty) {
-                audioByteCount += audioData.length;
-                print('Decoded audio chunk: ${audioData.length} bytes (total: $audioByteCount)');
                 yield audioData;
               }
             }
           }
-
-          print('SSE streaming complete: $eventCount events, $audioByteCount audio bytes');
         } else {
           throw TTSProviderException(
             'Streaming failed: ${streamedResponse.statusCode}',
@@ -423,12 +418,8 @@ class CartesiaProvider extends TTSProvider {
           return base64Decode(audioBase64);
         }
       } catch (e) {
-        print('Failed to parse SSE JSON or decode audio: $e');
+        // Silently ignore parse errors - likely malformed SSE events
         return null;
-      }
-    } else {
-      if (eventType != 'chunk') {
-        print('Ignoring non-chunk event: $eventType');
       }
     }
 

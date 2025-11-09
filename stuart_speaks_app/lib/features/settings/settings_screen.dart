@@ -1,9 +1,17 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart' show Share, XFile, ShareResultStatus;
+import 'package:file_picker/file_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/services/tts_provider_manager.dart';
 import '../../core/providers/tts_provider.dart';
+import '../../core/models/default_provider_templates.dart';
+import '../../core/models/provider_template.dart';
+import '../../core/services/custom_provider_storage.dart';
 
 /// Settings screen for configuring TTS providers
 class SettingsScreen extends StatefulWidget {
@@ -239,6 +247,150 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// Import provider configuration from .speakjson file
+  Future<void> _importProviderConfig() async {
+    try {
+      // Pick file
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['speakjson', 'json'],
+      );
+
+      if (result == null || result.files.isEmpty) {
+        return; // User canceled
+      }
+
+      final file = File(result.files.single.path!);
+      final jsonContent = await file.readAsString();
+
+      // Parse template
+      final template = ProviderTemplate.fromSpeakJson(jsonContent);
+
+      // Check if provider already exists
+      final prefs = await SharedPreferences.getInstance();
+      final storage = CustomProviderStorage(prefs);
+      final exists = await storage.exists(template.id);
+
+      if (exists && mounted) {
+        // Ask user if they want to replace
+        final replace = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Provider Already Exists'),
+            content: Text(
+              'A provider with ID "${template.id}" already exists. Do you want to replace it?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.orange,
+                ),
+                child: const Text('Replace'),
+              ),
+            ],
+          ),
+        );
+
+        if (replace != true) return;
+      }
+
+      // Save template
+      await storage.save(template);
+
+      // Import into provider manager
+      await widget.providerManager.importCustomProvider(template.id);
+
+      // Refresh provider list
+      setState(() {
+        _selectedProviderId = null;
+        _selectedProvider = null;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${template.name} imported successfully!'),
+            backgroundColor: Colors.green,
+            action: SnackBarAction(
+              label: 'Select',
+              textColor: Colors.white,
+              onPressed: () {
+                _onProviderChanged(template.id);
+              },
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Import failed: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Export current provider configuration as .speakjson file
+  Future<void> _exportProviderConfig() async {
+    final provider = _selectedProvider;
+    if (provider == null) return;
+
+    try {
+      // Get provider template
+      final template = DefaultProviderTemplates.getById(provider.id);
+      if (template == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('This provider cannot be exported'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      // Convert to .speakjson format
+      final jsonContent = template.toSpeakJson();
+
+      // Create temporary file
+      final tempDir = await getTemporaryDirectory();
+      final file = File('${tempDir.path}/${provider.id}.speakjson');
+      await file.writeAsString(jsonContent);
+
+      // Share the file
+      final result = await Share.shareXFiles(
+        [XFile(file.path)],
+        subject: '${provider.name} TTS Provider Configuration',
+        text: 'Import this configuration in Stuart Speaks to add the ${provider.name} provider.',
+      );
+
+      if (result.status == ShareResultStatus.success && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${provider.name} configuration exported!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Export failed: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading && _selectedProvider == null) {
@@ -254,6 +406,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('TTS Provider Settings'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.file_upload),
+            tooltip: 'Import Provider Config',
+            onPressed: _importProviderConfig,
+          ),
+          if (_selectedProvider != null)
+            IconButton(
+              icon: const Icon(Icons.share),
+              tooltip: 'Export Provider Config',
+              onPressed: _exportProviderConfig,
+            ),
+        ],
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -386,27 +551,72 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final widgets = <Widget>[];
 
     for (final field in provider.getRequiredConfig()) {
-      widgets.add(
-        TextField(
-          controller: _controllers[field.key],
-          decoration: InputDecoration(
-            labelText: '${field.label}${field.isRequired ? ' *' : ''}',
-            hintText: field.hint,
-            prefixIcon: Icon(
-              field.isSecret ? Icons.key : Icons.settings,
+      // Render dropdown if field has options
+      if (field.options != null && field.options!.isNotEmpty) {
+        widgets.add(
+          InputDecorator(
+            decoration: InputDecoration(
+              labelText: '${field.label}${field.isRequired ? ' *' : ''}',
+              hintText: field.hint,
+              prefixIcon: const Icon(Icons.settings),
+              filled: true,
+              fillColor: Colors.white,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              suffixIcon: _isSaved
+                  ? const Icon(Icons.check, color: Colors.green)
+                  : null,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             ),
-            filled: true,
-            fillColor: Colors.white,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                value: _controllers[field.key]?.text.isEmpty ?? true
+                    ? (field.defaultValue ?? field.options!.first)
+                    : _controllers[field.key]?.text,
+                isExpanded: true,
+                items: field.options!.map((option) {
+                  return DropdownMenuItem(
+                    value: option,
+                    child: Text(
+                      option,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  if (value != null) {
+                    _controllers[field.key]?.text = value;
+                  }
+                },
+              ),
             ),
-            suffixIcon: _isSaved
-                ? const Icon(Icons.check, color: Colors.green)
-                : null,
           ),
-          obscureText: field.isSecret,
-        ),
-      );
+        );
+      } else {
+        // Render text field for non-dropdown fields
+        widgets.add(
+          TextField(
+            controller: _controllers[field.key],
+            decoration: InputDecoration(
+              labelText: '${field.label}${field.isRequired ? ' *' : ''}',
+              hintText: field.hint,
+              prefixIcon: Icon(
+                field.isSecret ? Icons.key : Icons.settings,
+              ),
+              filled: true,
+              fillColor: Colors.white,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              suffixIcon: _isSaved
+                  ? const Icon(Icons.check, color: Colors.green)
+                  : null,
+            ),
+            obscureText: field.isSecret,
+          ),
+        );
+      }
       widgets.add(const SizedBox(height: 16));
     }
 
