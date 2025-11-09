@@ -29,7 +29,7 @@ class ProviderTemplate {
   });
 
   /// Convert to JSON for sharing (.speakjson file)
-  Map<String, dynamic> toJson() {
+  Map<String, dynamic> toJson({Map<String, String>? configValues}) {
     return {
       'version': '1.0',
       'provider': {
@@ -40,7 +40,11 @@ class ProviderTemplate {
         'supportsStreaming': supportsStreaming,
         'supportsVoiceCloning': supportsVoiceCloning,
         'endpoints': endpoints,
-        'configFields': configFields.map((f) => f.toJson()).toList(),
+        'configFields': configFields.map((f) => f.toJson(
+          value: (configValues != null && !f.isSecret)
+            ? configValues[f.key]
+            : null,
+        )).toList(),
         'requestFormat': requestFormat.toJson(),
         'responseFormat': responseFormat.toJson(),
       },
@@ -73,8 +77,8 @@ class ProviderTemplate {
   }
 
   /// Export to .speakjson file content
-  String toSpeakJson() {
-    return const JsonEncoder.withIndent('  ').convert(toJson());
+  String toSpeakJson({Map<String, String>? configValues}) {
+    return const JsonEncoder.withIndent('  ').convert(toJson(configValues: configValues));
   }
 
   /// Import from .speakjson file content
@@ -86,7 +90,7 @@ class ProviderTemplate {
 
 /// Extension to add JSON serialization to ConfigField
 extension ConfigFieldJson on ConfigField {
-  Map<String, dynamic> toJson() {
+  Map<String, dynamic> toJson({String? value}) {
     return {
       'key': key,
       'label': label,
@@ -95,6 +99,7 @@ extension ConfigFieldJson on ConfigField {
       'isRequired': isRequired,
       if (defaultValue != null) 'defaultValue': defaultValue,
       if (options != null) 'options': options,
+      if (value != null) 'value': value,
     };
   }
 

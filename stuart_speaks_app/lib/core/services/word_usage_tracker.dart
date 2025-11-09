@@ -144,6 +144,18 @@ class WordUsageTracker {
     return words;
   }
 
+  /// Remove a word from vocabulary
+  Future<void> removeWord(String wordText) async {
+    final key = wordText.toLowerCase();
+    _vocabulary.remove(key);
+    await _saveVocabulary();
+  }
+
+  /// Record usage of a word (for manually adding words)
+  Future<void> recordUsage(String wordText) async {
+    trackWordUsage(wordText);
+  }
+
   /// Import word usage from text analysis
   /// This will add/update words in the vocabulary based on their frequency in the analyzed text
   Future<ImportStats> importFromTextAnalysis(

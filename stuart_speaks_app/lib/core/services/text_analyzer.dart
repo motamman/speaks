@@ -53,6 +53,9 @@ class TextAnalyzer {
       if (word.length < minWordLength) continue;
       if (excludeStopWords && _stopWords.contains(word)) continue;
 
+      // Skip pure numbers (0, 00, 100, etc.)
+      if (RegExp(r'^\d+$').hasMatch(word)) continue;
+
       wordCounts[word] = (wordCounts[word] ?? 0) + 1;
     }
 

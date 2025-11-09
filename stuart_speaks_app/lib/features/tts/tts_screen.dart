@@ -106,6 +106,20 @@ class _TTSScreenState extends State<TTSScreen> {
     }
   }
 
+  /// Reload the usage tracker to pick up newly imported vocabulary
+  Future<void> _reloadUsageTracker() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final tracker = WordUsageTracker(prefs);
+      await tracker.initialize();
+      _usageTracker = tracker;
+
+      _logger.info('Usage tracker reloaded');
+    } catch (e) {
+      _logger.error('Failed to reload usage tracker', error: e);
+    }
+  }
+
   void _onTextChanged() {
     final tracker = _usageTracker;
     if (tracker == null) return;
@@ -671,6 +685,8 @@ class _TTSScreenState extends State<TTSScreen> {
                     ),
                   ),
                 );
+                // Reload usage tracker to pick up any imported vocabulary
+                await _reloadUsageTracker();
                 // Refresh state after returning from settings
                 setState(() {});
               } else {
@@ -738,8 +754,9 @@ class _TTSScreenState extends State<TTSScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Scrollable content area
+        // Top 2/3 - Text entry and word wheel
         Expanded(
+          flex: 2,
           child: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -752,13 +769,28 @@ class _TTSScreenState extends State<TTSScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 16.0),
                   child: Center(child: _buildWordWheel()),
                 ),
-
-                const SizedBox(height: 16),
-
-                // History section
-                _buildPhrasesList(),
               ],
             ),
+          ),
+        ),
+
+        const SizedBox(height: 8),
+
+        // Bottom 1/3 - Recent phrases (full width, scrollable)
+        Expanded(
+          flex: 1,
+          child: Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(color: Colors.grey[300]!, width: 1),
+              ),
+            ),
+            child: _speechHistory.isEmpty
+                ? const SizedBox.shrink()
+                : SingleChildScrollView(
+                    child: _buildPhrasesList(),
+                  ),
           ),
         ),
       ],
@@ -1022,52 +1054,56 @@ class _TTSScreenState extends State<TTSScreen> {
       return const SizedBox.shrink();
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0),
-          child: Row(
-            children: [
-              Text(
-                'Recent',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: const Color(0xFF2563EB),
-                    ),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF2563EB),
-                  borderRadius: BorderRadius.circular(12),
+    return SizedBox(
+      width: double.infinity,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            child: Row(
+              children: [
+                Text(
+                  'Recent Phrases',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: const Color(0xFF2563EB),
+                        fontSize: 20,
+                      ),
                 ),
-                child: Text(
-                  '${_speechHistory.length}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2563EB),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${_speechHistory.length}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-        const SizedBox(height: 8),
-        ListView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          itemCount: _speechHistory.length,
-          itemBuilder: (context, index) {
-            return _buildHistoryItem(_speechHistory[index]);
-          },
-        ),
-        const SizedBox(height: 16),
-      ],
+          const SizedBox(height: 8),
+          ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            itemCount: _speechHistory.length,
+            itemBuilder: (context, index) {
+              return _buildHistoryItem(_speechHistory[index]);
+            },
+          ),
+          const SizedBox(height: 16),
+        ],
+      ),
     );
   }
 
@@ -1116,10 +1152,11 @@ class _TTSScreenState extends State<TTSScreen> {
                       Text(
                         item.text,
                         style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w500,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF1E3A8A),
                         ),
-                        maxLines: 2,
+                        maxLines: 3,
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 4),

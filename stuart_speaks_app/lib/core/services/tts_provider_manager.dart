@@ -53,6 +53,7 @@ class TTSProviderManager {
     final customTemplates = await storage.getAll();
 
     for (final template in customTemplates) {
+      // All imported providers get added with their unique IDs
       _providers[template.id] = DynamicTTSProvider(template);
     }
   }

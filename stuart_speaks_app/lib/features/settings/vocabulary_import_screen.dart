@@ -45,7 +45,7 @@ class _VocabularyImportScreenState extends State<VocabularyImportScreen> {
         file,
         excludeStopWords: true,
         minWordLength: 2,
-        maxWords: 1000,
+        maxWords: 10000, // Import up to 10,000 unique words
       );
 
       // Show preview dialog
@@ -149,7 +149,7 @@ class _VocabularyImportScreenState extends State<VocabularyImportScreen> {
 
       final stats = await tracker.importFromTextAnalysis(
         result.topWords,
-        minFrequency: 2, // Only import words that appear at least twice
+        minFrequency: 1, // Import all words
       );
 
       setState(() {
@@ -164,6 +164,14 @@ class _VocabularyImportScreenState extends State<VocabularyImportScreen> {
             ),
             backgroundColor: Colors.green,
             duration: const Duration(seconds: 4),
+            action: SnackBarAction(
+              label: 'Done',
+              textColor: Colors.white,
+              onPressed: () {
+                // Pop with result indicating successful import
+                Navigator.pop(context, true);
+              },
+            ),
           ),
         );
       }

@@ -95,6 +95,31 @@ class DynamicTTSProvider extends TTSProvider {
       dynamic body;
       if (template.requestFormat.body != null) {
         body = _replacePlaceholdersInMap(template.requestFormat.body!, request.text);
+
+        // For Cartesia, fix numeric types
+        if (id.startsWith('cartesia') && body is Map) {
+          if (body['output_format'] is Map) {
+            // Parse sample_rate to integer
+            final sampleRateStr = body['output_format']['sample_rate'];
+            if (sampleRateStr is String) {
+              body['output_format']['sample_rate'] = int.tryParse(sampleRateStr) ?? 44100;
+            }
+          }
+
+          // Add generation_config
+          final speedValue = double.tryParse(_config['speedValue'] ?? '1.0') ?? 1.0;
+          final volume = double.tryParse(_config['volume'] ?? '1.0') ?? 1.0;
+          body['generation_config'] = {
+            'speed': speedValue,
+            'volume': volume,
+          };
+
+          // Add speed parameter if it's not 'normal'
+          final speed = _config['speed'] ?? 'normal';
+          if (speed != 'normal') {
+            body['speed'] = speed;
+          }
+        }
       }
 
       // Make request
@@ -206,6 +231,152 @@ class DynamicTTSProvider extends TTSProvider {
     });
 
     return result;
+  }
+
+  @override
+  Stream<Uint8List>? generateSpeechStream(TTSRequest request) async* {
+    if (!template.supportsStreaming) {
+      throw UnimplementedError('Streaming not supported by this provider');
+    }
+
+    if (!_isInitialized) {
+      throw TTSProviderException(
+        'Provider not initialized',
+        providerId: id,
+      );
+    }
+
+    try {
+      final endpoint = template.endpoints['ttsStream'] ?? template.endpoints['tts'];
+      if (endpoint == null) {
+        throw TTSProviderException(
+          'Streaming endpoint not configured',
+          providerId: id,
+        );
+      }
+
+      // Build URL
+      final url = Uri.parse('${template.baseUrl}${_replacePlaceholders(endpoint, request.text)}');
+
+      // Build headers
+      final headers = <String, String>{};
+      template.requestFormat.headers.forEach((key, value) {
+        headers[key] = _replacePlaceholders(value, request.text);
+      });
+
+      // Build request body with streaming-specific overrides
+      dynamic body;
+      if (template.requestFormat.body != null) {
+        body = _replacePlaceholdersInMap(template.requestFormat.body!, request.text);
+
+        // For Cartesia streaming, apply specific fixes
+        if (id.startsWith('cartesia') && body is Map) {
+          // Override container to 'raw' for SSE endpoint
+          if (body['output_format'] is Map) {
+            body['output_format']['container'] = 'raw';
+
+            // Parse sample_rate to integer
+            final sampleRateStr = body['output_format']['sample_rate'];
+            if (sampleRateStr is String) {
+              body['output_format']['sample_rate'] = int.tryParse(sampleRateStr) ?? 44100;
+            }
+          }
+
+          // Add generation_config
+          final speedValue = double.tryParse(_config['speedValue'] ?? '1.0') ?? 1.0;
+          final volume = double.tryParse(_config['volume'] ?? '1.0') ?? 1.0;
+          body['generation_config'] = {
+            'speed': speedValue,
+            'volume': volume,
+          };
+
+          // Add speed parameter if it's not 'normal'
+          final speed = _config['speed'] ?? 'normal';
+          if (speed != 'normal') {
+            body['speed'] = speed;
+          }
+        }
+      }
+
+      // Make streaming request
+      final client = http.Client();
+      final streamRequest = http.Request(template.requestFormat.method, url);
+      streamRequest.headers.addAll(headers);
+      if (body != null) {
+        streamRequest.body = jsonEncode(body);
+      }
+
+      final streamedResponse = await client.send(streamRequest);
+
+      if (streamedResponse.statusCode == 200 || streamedResponse.statusCode == 201 || streamedResponse.statusCode == 204) {
+        // For Cartesia SSE streaming, parse the SSE events
+        if (id.startsWith('cartesia') && endpoint.contains('sse')) {
+          String buffer = '';
+          await for (final chunk in streamedResponse.stream) {
+            buffer += utf8.decode(chunk, allowMalformed: true);
+
+            // Process complete SSE events (separated by double newline)
+            while (buffer.contains('\n\n')) {
+              final eventEnd = buffer.indexOf('\n\n');
+              final event = buffer.substring(0, eventEnd);
+              buffer = buffer.substring(eventEnd + 2);
+
+              // Parse SSE event to extract audio data
+              final audioData = _parseSSEEvent(event);
+              if (audioData != null && audioData.isNotEmpty) {
+                yield audioData;
+              }
+            }
+          }
+        } else {
+          // Stream the response bytes directly
+          await for (final chunk in streamedResponse.stream) {
+            yield Uint8List.fromList(chunk);
+          }
+        }
+      } else {
+        throw TTSProviderException(
+          'Streaming request failed: ${streamedResponse.statusCode}',
+          providerId: id,
+          statusCode: streamedResponse.statusCode,
+        );
+      }
+
+      client.close();
+    } catch (e) {
+      if (e is TTSProviderException) rethrow;
+      throw TTSProviderException(
+        'Streaming error: ${e.toString()}',
+        providerId: id,
+        originalError: e,
+      );
+    }
+  }
+
+  /// Parse SSE event to extract audio data (for Cartesia)
+  Uint8List? _parseSSEEvent(String event) {
+    try {
+      // SSE format: "data: {...}\n"
+      final lines = event.split('\n');
+      for (final line in lines) {
+        if (line.startsWith('data: ')) {
+          final jsonStr = line.substring(6); // Remove "data: " prefix
+          if (jsonStr.trim() == '[DONE]') {
+            return null; // End of stream
+          }
+
+          final json = jsonDecode(jsonStr) as Map<String, dynamic>;
+          final audioBase64 = json['data'] as String?;
+
+          if (audioBase64 != null && audioBase64.isNotEmpty) {
+            return base64Decode(audioBase64);
+          }
+        }
+      }
+    } catch (e) {
+      // Ignore parse errors for incomplete events
+    }
+    return null;
   }
 
   @override

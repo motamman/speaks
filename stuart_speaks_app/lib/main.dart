@@ -22,6 +22,16 @@ class StuartSpeaksApp extends StatelessWidget {
     return MaterialApp(
       title: 'Stuart Speaks',
       debugShowCheckedModeBanner: false,
+      // Disable shake-to-undo for accessibility (ALS user cannot shake device)
+      builder: (context, child) {
+        return Actions(
+          actions: {
+            UndoTextIntent: DoNothingAction(consumesKey: false),
+            RedoTextIntent: DoNothingAction(consumesKey: false),
+          },
+          child: child!,
+        );
+      },
       theme: ThemeData(
         useMaterial3: true,
         // Match the backend design colors

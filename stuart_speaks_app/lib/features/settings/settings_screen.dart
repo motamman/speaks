@@ -1,9 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart' show Share, XFile, ShareResultStatus;
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -14,6 +14,7 @@ import '../../core/models/default_provider_templates.dart';
 import '../../core/models/provider_template.dart';
 import '../../core/services/custom_provider_storage.dart';
 import 'vocabulary_import_screen.dart';
+import 'vocabulary_screen.dart';
 
 /// Settings screen for configuring TTS providers
 class SettingsScreen extends StatefulWidget {
@@ -301,30 +302,89 @@ class _SettingsScreenState extends State<SettingsScreen> {
         if (replace != true) return;
       }
 
-      // Save template
-      await storage.save(template);
+      // Generate unique ID if needed
+      var uniqueId = template.id;
+      var uniqueName = template.name;
+      final builtInIds = ['fish_audio', 'cartesia', 'elevenlabs', 'playht', 'resemble'];
+      final existingProviders = widget.providerManager.availableProviders.map((p) => p.id).toSet();
+
+      // If this ID already exists (built-in or imported), make it unique
+      if (existingProviders.contains(uniqueId)) {
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        uniqueId = '${template.id}_imported_$timestamp';
+        uniqueName = '${template.name} (Imported)';
+      }
+
+      // Create modified template with unique ID
+      final uniqueTemplate = ProviderTemplate(
+        id: uniqueId,
+        name: uniqueName,
+        description: template.description,
+        baseUrl: template.baseUrl,
+        supportsStreaming: template.supportsStreaming,
+        supportsVoiceCloning: template.supportsVoiceCloning,
+        configFields: template.configFields,
+        endpoints: template.endpoints,
+        requestFormat: template.requestFormat,
+        responseFormat: template.responseFormat,
+      );
+
+      // Save template with unique ID
+      await storage.save(uniqueTemplate);
 
       // Import into provider manager
-      await widget.providerManager.importCustomProvider(template.id);
+      final success = await widget.providerManager.importCustomProvider(uniqueId);
+      if (!success) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Failed to import provider'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
 
-      // Refresh provider list
+      // Extract and save any included non-secret values from the JSON
+      final json = jsonDecode(jsonContent) as Map<String, dynamic>;
+      final providerJson = json['provider'] as Map<String, dynamic>;
+      final configFieldsList = providerJson['configFields'] as List<dynamic>;
+
+      final importedValues = <String, String>{};
+      for (final fieldJson in configFieldsList) {
+        final field = fieldJson as Map<String, dynamic>;
+        final key = field['key'] as String;
+        final value = field['value'] as String?;
+        final isSecret = field['isSecret'] as bool? ?? false;
+
+        // Only import non-secret values
+        if (value != null && value.isNotEmpty && !isSecret) {
+          importedValues[key] = value;
+        }
+      }
+
+      // Save imported values to SharedPreferences using unique ID
+      if (importedValues.isNotEmpty) {
+        for (final entry in importedValues.entries) {
+          await prefs.setString('${uniqueId}_${entry.key}', entry.value);
+        }
+      }
+
+      // Refresh provider list and select the imported provider
       setState(() {
-        _selectedProviderId = null;
+        _selectedProviderId = uniqueId;
         _selectedProvider = null;
       });
+
+      // This will load the provider and trigger _loadProviderConfiguration
+      await _onProviderChanged(uniqueId);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('${template.name} imported successfully!'),
+            content: Text('$uniqueName imported successfully!'),
             backgroundColor: Colors.green,
-            action: SnackBarAction(
-              label: 'Select',
-              textColor: Colors.white,
-              onPressed: () {
-                _onProviderChanged(template.id);
-              },
-            ),
           ),
         );
       }
@@ -358,24 +418,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return;
       }
 
-      // Convert to .speakjson format
-      final jsonContent = template.toSpeakJson();
+      // Get current config values to include non-secret values in export
+      final configValues = <String, String>{};
+      for (final controller in _controllers.entries) {
+        if (controller.value.text.isNotEmpty) {
+          configValues[controller.key] = controller.value.text;
+        }
+      }
 
-      // Create file in temp directory and share via XFile.fromData
+      // Convert to .speakjson format (will only include non-secret values)
+      final jsonContent = template.toSpeakJson(configValues: configValues);
+
+      // Write to temporary directory with proper extension
+      final tempDir = Directory.systemTemp;
       final fileName = '${provider.id}.speakjson';
-      final bytes = jsonContent.codeUnits;
+      final tempFile = File('${tempDir.path}/$fileName');
+      await tempFile.writeAsString(jsonContent);
 
-      // Share using XFile.fromData which handles iOS sandboxing better
-      final xFile = XFile.fromData(
-        Uint8List.fromList(bytes),
-        name: fileName,
-        mimeType: 'application/json',
-      );
+      // Share the file
+      final xFile = XFile(tempFile.path);
+
+      // Get screen size for iPad popover positioning
+      final box = context.findRenderObject() as RenderBox?;
+      final sharePositionOrigin = box != null
+          ? box.localToGlobal(Offset.zero) & box.size
+          : null;
 
       final result = await Share.shareXFiles(
         [xFile],
         subject: '${provider.name} TTS Provider Configuration',
         text: 'Import this configuration in Stuart Speaks to add the ${provider.name} provider.',
+        sharePositionOrigin: sharePositionOrigin,
       );
 
       if (result.status == ShareResultStatus.success && mounted) {
@@ -415,15 +488,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
         title: const Text('TTS Provider Settings'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.library_books),
-            tooltip: 'Import Vocabulary',
+            icon: const Icon(Icons.book),
+            tooltip: 'Vocabulary Dictionary',
             onPressed: () {
               Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const VocabularyScreen(),
+                ),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.library_books),
+            tooltip: 'Import Vocabulary',
+            onPressed: () async {
+              final wasImported = await Navigator.push<bool>(
                 context,
                 MaterialPageRoute(
                   builder: (context) => const VocabularyImportScreen(),
                 ),
               );
+
+              // If vocabulary was imported, notify TTS screen to reload
+              if (wasImported == true && mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Vocabulary updated! Word suggestions will reflect your import.'),
+                    duration: Duration(seconds: 2),
+                  ),
+                );
+              }
             },
           ),
           IconButton(
@@ -633,6 +728,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   : null,
             ),
             obscureText: field.isSecret,
+            enableInteractiveSelection: true,
+            enableSuggestions: false,
+            autocorrect: false,
           ),
         );
       }
