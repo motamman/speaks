@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:share_plus/share_plus.dart' show Share, XFile;
 
 import '../../core/models/tts_request.dart';
 import '../../core/models/word.dart';
@@ -14,11 +16,12 @@ import '../../core/services/text_chunker.dart';
 import '../../core/services/app_logger.dart';
 import '../../core/services/error_handler.dart';
 import '../../core/services/rate_limiter.dart';
+import '../../core/services/user_profile_service.dart';
 import '../../core/utils/input_validator.dart';
 import '../../core/constants/accessibility_constants.dart';
 import '../../core/providers/tts_provider.dart';
 import '../input/word_wheel/word_wheel_widget_v2.dart';
-import '../settings/settings_screen.dart';
+import '../settings/main_settings_screen.dart';
 import '../phrases/phrases_screen.dart';
 
 /// Main TTS screen with predictive word wheel
@@ -40,6 +43,7 @@ class _TTSScreenState extends State<TTSScreen> {
   WordUsageTracker? _usageTracker;
   AudioPlaybackService? _audioService;
   TTSProviderManager? _providerManager;
+  UserProfileService? _profileService;
   List<Word> _currentSuggestions = [];
   List<SpeechHistoryItem> _speechHistory = [];
   bool _isLoading = true;
@@ -71,6 +75,9 @@ class _TTSScreenState extends State<TTSScreen> {
   Future<void> _initialize() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+
+      // Initialize user profile service
+      _profileService = UserProfileService(prefs);
 
       // Initialize usage tracker
       final tracker = WordUsageTracker(prefs);
@@ -585,6 +592,47 @@ class _TTSScreenState extends State<TTSScreen> {
     }
   }
 
+  /// Share cached audio file
+  Future<void> _shareAudioFromHistory(SpeechHistoryItem item) async {
+    if (item.cachedAudio == null) {
+      _showError('No audio available to share');
+      return;
+    }
+
+    try {
+      // Write audio to temporary file
+      final tempDir = Directory.systemTemp;
+      final extension = item.mimeType == 'audio/mpeg' ? 'mp3' : 'wav';
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final fileName = 'speaks_audio_$timestamp.$extension';
+      final tempFile = File('${tempDir.path}/$fileName');
+      await tempFile.writeAsBytes(item.cachedAudio!);
+
+      // Share the file
+      final xFile = XFile(tempFile.path);
+      final box = context.findRenderObject() as RenderBox?;
+      final sharePositionOrigin = box != null
+          ? box.localToGlobal(Offset.zero) & box.size
+          : null;
+
+      await Share.shareXFiles(
+        [xFile],
+        subject: 'Audio from ${_profileService?.getAppTitle() ?? "Speaks"}',
+        text: item.text,
+        sharePositionOrigin: sharePositionOrigin,
+      );
+    } catch (e) {
+      _showError('Failed to share audio: ${e.toString()}');
+    }
+  }
+
+  /// Regenerate/re-speak phrase from history
+  Future<void> _regenerateFromHistory(SpeechHistoryItem item) async {
+    // Put text in text box and trigger speak
+    _textController.text = item.text;
+    await _onSpeak();
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -664,7 +712,7 @@ class _TTSScreenState extends State<TTSScreen> {
               width: 40,
             ),
             const SizedBox(width: 12),
-            const Text('Stuart Speaks'),
+            Text(_profileService?.getAppTitle() ?? 'Speaks'),
           ],
         ),
         actions: [
@@ -682,14 +730,14 @@ class _TTSScreenState extends State<TTSScreen> {
                 await Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => SettingsScreen(
+                    builder: (context) => MainSettingsScreen(
                       providerManager: providerManager,
                     ),
                   ),
                 );
                 // Reload usage tracker to pick up any imported vocabulary
                 await _reloadUsageTracker();
-                // Refresh state after returning from settings
+                // Refresh state after returning from settings (including profile changes)
                 setState(() {});
               } else {
                 _showError('App not fully initialized');
@@ -914,6 +962,7 @@ class _TTSScreenState extends State<TTSScreen> {
                     focusNode: _textFieldFocus,
                     maxLines: null,
                     expands: true,
+                    textAlignVertical: TextAlignVertical.top,
                     style: const TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.w500,
@@ -945,6 +994,7 @@ class _TTSScreenState extends State<TTSScreen> {
                   controller: _textController,
                   focusNode: _textFieldFocus,
                   maxLines: 6,
+                  textAlignVertical: TextAlignVertical.top,
                   style: const TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.w500,
@@ -1261,6 +1311,20 @@ class _TTSScreenState extends State<TTSScreen> {
 
                 const SizedBox(width: AccessibilityConstants.minSpacing),
 
+                // Regenerate/Re-speak button
+                IconButton(
+                  icon: const Icon(
+                    Icons.refresh,
+                    color: Color(0xFF2563EB),
+                    size: AccessibilityConstants.standardIconSize,
+                  ),
+                  onPressed: () => _regenerateFromHistory(item),
+                  constraints: AccessibleTapTarget.minimum(),
+                  tooltip: 'Regenerate audio',
+                ),
+
+                const SizedBox(width: AccessibilityConstants.minSpacing),
+
                 // Add to Quick Phrases button
                 IconButton(
                   icon: const Icon(
@@ -1275,11 +1339,26 @@ class _TTSScreenState extends State<TTSScreen> {
 
                 const SizedBox(width: AccessibilityConstants.minSpacing),
 
+                // Share audio button (only if cached)
+                if (item.hasCache)
+                  IconButton(
+                    icon: const Icon(
+                      Icons.share,
+                      color: Color(0xFF2563EB),
+                      size: AccessibilityConstants.standardIconSize,
+                    ),
+                    onPressed: () => _shareAudioFromHistory(item),
+                    constraints: AccessibleTapTarget.minimum(),
+                    tooltip: 'Share audio file',
+                  ),
+
+                if (item.hasCache) const SizedBox(width: AccessibilityConstants.minSpacing),
+
                 // Delete button
                 IconButton(
                   icon: Icon(
                     Icons.delete_outline,
-                    color: Colors.grey[600],
+                    color: Colors.red[400],
                     size: AccessibilityConstants.standardIconSize,
                   ),
                   onPressed: () => _confirmDeleteFromHistory(item),

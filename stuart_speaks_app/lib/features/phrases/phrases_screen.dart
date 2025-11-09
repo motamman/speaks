@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:share_plus/share_plus.dart' show Share, XFile;
 
 import '../../core/models/phrase.dart';
 import '../../core/services/audio_playback_service.dart';
@@ -317,6 +319,41 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
     Navigator.pop(context, phrase.text);
   }
 
+  /// Share cached audio file
+  Future<void> _shareAudio(Phrase phrase) async {
+    final cachedAudio = _audioCache[phrase.text];
+    if (cachedAudio == null) {
+      _showError('No audio available to share. Please play the phrase first.');
+      return;
+    }
+
+    try {
+      // Write audio to temporary file
+      final tempDir = Directory.systemTemp;
+      final extension = 'mp3'; // Default to mp3 for phrases
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final fileName = 'speaks_phrase_$timestamp.$extension';
+      final tempFile = File('${tempDir.path}/$fileName');
+      await tempFile.writeAsBytes(cachedAudio);
+
+      // Share the file
+      final xFile = XFile(tempFile.path);
+      final box = context.findRenderObject() as RenderBox?;
+      final sharePositionOrigin = box != null
+          ? box.localToGlobal(Offset.zero) & box.size
+          : null;
+
+      await Share.shareXFiles(
+        [xFile],
+        subject: 'Phrase from Speaks',
+        text: phrase.text,
+        sharePositionOrigin: sharePositionOrigin,
+      );
+    } catch (e) {
+      _showError('Failed to share audio: ${e.toString()}');
+    }
+  }
+
   Future<void> _speakPhrase(Phrase phrase) async {
     if (widget.providerManager.activeProvider == null) {
       _showError('Please configure a TTS provider in settings first');
@@ -476,10 +513,9 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         onTap: isSpeaking ? null : () => _speakPhrase(phrase),
-        onLongPress: () => _showPhraseOptions(phrase),
         borderRadius: BorderRadius.circular(12),
         child: Container(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
             border: Border.all(
               color: isSpeaking
@@ -489,81 +525,143 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
             ),
             borderRadius: BorderRadius.circular(12),
           ),
-          child: Stack(
+          child: Column(
             children: [
-              // Faint play icon background
-              Center(
-                child: Icon(
-                  Icons.play_circle_outline,
-                  size: 80,
-                  color: Colors.grey.withValues(alpha: 0.1),
-                ),
-              ),
-
-              // Main content
-              Center(
-                child: isSpeaking
-                    ? const CircularProgressIndicator()
-                    : Text(
-                        phrase.text,
+              // Top row with badges
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  // Usage count badge
+                  if (phrase.usageCount > 0)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF2563EB),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        '${phrase.usageCount}',
                         style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF1E3A8A),
+                          fontSize: 10,
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
                         ),
-                        textAlign: TextAlign.center,
-                        maxLines: 4,
-                        overflow: TextOverflow.ellipsis,
                       ),
+                    ),
+                  if (phrase.usageCount > 0 && hasCache)
+                    const SizedBox(width: 4),
+
+                  // Cache indicator
+                  if (hasCache)
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(
+                        color: Colors.green,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                ],
               ),
 
-              // Top right badges
-              Positioned(
-                top: 0,
-                right: 0,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
+              // Main content area with faint play icon
+              Expanded(
+                child: Stack(
                   children: [
-                    // Usage count badge
-                    if (phrase.usageCount > 0)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF2563EB),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          '${phrase.usageCount}',
-                          style: const TextStyle(
-                            fontSize: 10,
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
+                    // Faint play icon background
+                    Center(
+                      child: Icon(
+                        Icons.play_circle_outline,
+                        size: 60,
+                        color: Colors.grey.withValues(alpha: 0.1),
                       ),
-                    if (phrase.usageCount > 0 && hasCache)
-                      const SizedBox(width: 4),
+                    ),
 
-                    // Cache indicator
-                    if (hasCache)
-                      Container(
-                        width: 8,
-                        height: 8,
-                        decoration: const BoxDecoration(
-                          color: Colors.green,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
+                    // Text
+                    Center(
+                      child: isSpeaking
+                          ? const CircularProgressIndicator()
+                          : Text(
+                              phrase.text,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF1E3A8A),
+                              ),
+                              textAlign: TextAlign.center,
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                    ),
                   ],
                 ),
+              ),
+
+              // Action buttons at bottom
+              const Divider(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  // Edit button
+                  _buildIconButton(
+                    icon: Icons.edit,
+                    color: const Color(0xFF2563EB),
+                    onPressed: () => _editPhrase(phrase),
+                    tooltip: 'Edit',
+                  ),
+
+                  // Regenerate button
+                  _buildIconButton(
+                    icon: Icons.refresh,
+                    color: const Color(0xFF2563EB),
+                    onPressed: () => _replayPhrase(phrase),
+                    tooltip: 'Regenerate',
+                  ),
+
+                  // Share button (only if cached)
+                  if (hasCache)
+                    _buildIconButton(
+                      icon: Icons.share,
+                      color: const Color(0xFF2563EB),
+                      onPressed: () => _shareAudio(phrase),
+                      tooltip: 'Share',
+                    ),
+
+                  // Delete button
+                  _buildIconButton(
+                    icon: Icons.delete_outline,
+                    color: Colors.red[400]!,
+                    onPressed: () => _confirmDeletePhrase(phrase),
+                    tooltip: 'Delete',
+                  ),
+                ],
               ),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildIconButton({
+    required IconData icon,
+    required Color color,
+    required VoidCallback onPressed,
+    required String tooltip,
+  }) {
+    return IconButton(
+      icon: Icon(icon, size: 20),
+      color: color,
+      onPressed: onPressed,
+      tooltip: tooltip,
+      constraints: const BoxConstraints(
+        minWidth: AccessibilityConstants.minTapTargetSize,
+        minHeight: AccessibilityConstants.minTapTargetSize,
+      ),
+      padding: EdgeInsets.zero,
     );
   }
 
