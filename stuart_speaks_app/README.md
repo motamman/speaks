@@ -67,26 +67,17 @@ A Flutter AAC (Augmentative and Alternative Communication) app with multi-provid
 - Temperature and top-p controls
 
 ### ElevenLabs
-- Professional voices
+- Custom voice cloning
 - HTTP streaming
 - MP3 and PCM formats
 - Stability, similarity boost, style controls
 
 ### Cartesia AI
+- Custom voice cloning
 - Low-latency Sonic model
 - Server-Sent Events (SSE) streaming
 - PCM and MP3 formats
 - Pre-configured with defaults
-
-### Play.ht
-- Instant voice cloning (30s audio)
-- Streaming NOT YET IMPLEMENTED
-- MP3, WAV, OGG, FLAC formats
-
-### Resemble.AI
-- Voice cloning (10s-1min audio)
-- Streaming NOT YET IMPLEMENTED
-- MP3 and WAV formats
 
 ## Installation
 

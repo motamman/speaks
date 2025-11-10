@@ -140,7 +140,7 @@ Speaks provides AI-powered text-to-speech with intelligent word prediction and a
 3. Get API key and model ID
 
 ### ElevenLabs
-- Professional voices
+- Custom voice cloning
 - HTTP streaming endpoint
 - Supports: MP3, PCM
 - Controls: stability, similarity boost, style, speaker boost
@@ -152,6 +152,7 @@ Speaks provides AI-powered text-to-speech with intelligent word prediction and a
 4. Copy voice ID
 
 ### Cartesia AI
+- Custom voice cloning
 - Low-latency Sonic model
 - Server-Sent Events (SSE) streaming
 - Supports: PCM, MP3, WAV
