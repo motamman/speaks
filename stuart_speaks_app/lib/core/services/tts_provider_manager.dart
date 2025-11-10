@@ -133,7 +133,7 @@ class TTSProviderManager {
   /// Set up Cartesia as the default provider with preconfigured credentials
   Future<void> _setDefaultCartesiaProvider() async {
     const defaultConfig = {
-      'apiKey': 'sk_car_KBSxigKJsfEayuWgCvmDXS',
+      'apiKey': '', // Add your Cartesia API key here
       'voiceId': '63eb17dc-ab66-46e1-9ba9-37aec95137af',
       'modelId': 'sonic-english',
       'container': 'mp3',
