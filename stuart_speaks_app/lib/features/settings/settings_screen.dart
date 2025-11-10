@@ -685,9 +685,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             child: DropdownButtonHideUnderline(
               child: DropdownButton<String>(
-                value: _controllers[field.key]?.text.isEmpty ?? true
-                    ? (field.defaultValue ?? field.options!.first)
-                    : _controllers[field.key]?.text,
+                value: () {
+                  final controllerValue = _controllers[field.key]?.text;
+                  // Check if controller value exists in options
+                  if (controllerValue != null &&
+                      controllerValue.isNotEmpty &&
+                      field.options!.contains(controllerValue)) {
+                    return controllerValue;
+                  }
+                  // Fall back to default or first option
+                  return field.defaultValue ?? field.options!.first;
+                }(),
                 isExpanded: true,
                 items: field.options!.map((option) {
                   return DropdownMenuItem(

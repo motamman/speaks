@@ -410,6 +410,9 @@ class _TTSScreenState extends State<TTSScreen> {
       if (audioChunks.isNotEmpty) {
         final combinedBytes = Uint8List.fromList(audioChunks.expand((x) => x).toList());
         await audioService.play(combinedBytes, mimeType: mimeType, sampleRate: sampleRate);
+
+        // Add to history with cached audio
+        _addToHistory(text, combinedBytes, mimeType, sampleRate);
       }
     } else {
       // Fallback to concurrent generation for non-streaming providers
@@ -420,6 +423,9 @@ class _TTSScreenState extends State<TTSScreen> {
       if (audioChunks.isNotEmpty) {
         final combinedBytes = Uint8List.fromList(audioChunks.expand((x) => x).toList());
         await audioService.play(combinedBytes);
+
+        // Add to history with cached audio
+        _addToHistory(text, combinedBytes, null, null);
       }
     }
   }
@@ -1223,147 +1229,160 @@ class _TTSScreenState extends State<TTSScreen> {
           onTap: item.hasCache ? () => _replayFromHistory(item) : null,
           child: Padding(
             padding: const EdgeInsets.all(12),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Play button
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: item.hasCache
-                        ? const Color(0xFF2563EB).withAlpha(25)
-                        : Colors.grey[200],
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    Icons.play_arrow,
-                    color: item.hasCache
-                        ? const Color(0xFF2563EB)
-                        : Colors.grey[400],
-                    size: 24,
-                  ),
-                ),
-                const SizedBox(width: 12),
-
-                // Text content
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        item.text,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF1E3A8A),
-                        ),
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 4),
-                      Row(
+                // Text content at top with more room
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            item.formattedTime,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[600],
+                            item.text,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF1E3A8A),
                             ),
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          if (item.hasCache) ...[
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.green[50],
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                'cached',
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              Text(
+                                item.formattedTime,
                                 style: TextStyle(
-                                  fontSize: 10,
-                                  color: Colors.green[700],
-                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                  color: Colors.grey[600],
                                 ),
                               ),
-                            ),
-                          ],
+                              if (item.hasCache) ...[
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.green[50],
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    'cached',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: Colors.green[700],
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
                         ],
                       ),
-                    ],
-                  ),
-                ),
-
-                // Edit button
-                IconButton(
-                  icon: const Icon(
-                    Icons.edit,
-                    color: Color(0xFF2563EB),
-                    size: AccessibilityConstants.standardIconSize,
-                  ),
-                  onPressed: () => _editHistoryItem(item),
-                  constraints: AccessibleTapTarget.minimum(),
-                  tooltip: 'Edit in text box',
-                ),
-
-                const SizedBox(width: AccessibilityConstants.minSpacing),
-
-                // Regenerate/Re-speak button
-                IconButton(
-                  icon: const Icon(
-                    Icons.refresh,
-                    color: Color(0xFF2563EB),
-                    size: AccessibilityConstants.standardIconSize,
-                  ),
-                  onPressed: () => _regenerateFromHistory(item),
-                  constraints: AccessibleTapTarget.minimum(),
-                  tooltip: 'Regenerate audio',
-                ),
-
-                const SizedBox(width: AccessibilityConstants.minSpacing),
-
-                // Add to Quick Phrases button
-                IconButton(
-                  icon: const Icon(
-                    Icons.add_circle_outline,
-                    color: Color(0xFF2563EB),
-                    size: AccessibilityConstants.standardIconSize,
-                  ),
-                  onPressed: () => _addToQuickPhrases(item.text, cachedAudio: item.cachedAudio),
-                  constraints: AccessibleTapTarget.minimum(),
-                  tooltip: 'Add to Quick Phrases',
-                ),
-
-                const SizedBox(width: AccessibilityConstants.minSpacing),
-
-                // Share audio button (only if cached)
-                if (item.hasCache)
-                  IconButton(
-                    icon: const Icon(
-                      Icons.share,
-                      color: Color(0xFF2563EB),
-                      size: AccessibilityConstants.standardIconSize,
                     ),
-                    onPressed: () => _shareAudioFromHistory(item),
-                    constraints: AccessibleTapTarget.minimum(),
-                    tooltip: 'Share audio file',
-                  ),
+                  ],
+                ),
 
-                if (item.hasCache) const SizedBox(width: AccessibilityConstants.minSpacing),
+                const SizedBox(height: 8),
 
-                // Delete button
-                IconButton(
-                  icon: Icon(
-                    Icons.delete_outline,
-                    color: Colors.red[400],
-                    size: AccessibilityConstants.standardIconSize,
-                  ),
-                  onPressed: () => _confirmDeleteFromHistory(item),
-                  constraints: AccessibleTapTarget.minimum(),
-                  tooltip: 'Delete from history',
+                // Action buttons row below
+                Row(
+                  children: [
+                    // Play button
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: item.hasCache
+                            ? const Color(0xFF2563EB).withAlpha(25)
+                            : Colors.grey[200],
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.play_arrow,
+                        color: item.hasCache
+                            ? const Color(0xFF2563EB)
+                            : Colors.grey[400],
+                        size: 24,
+                      ),
+                    ),
+
+                    const Spacer(),
+
+                    // Edit button
+                    IconButton(
+                      icon: const Icon(
+                        Icons.edit,
+                        color: Color(0xFF2563EB),
+                        size: AccessibilityConstants.standardIconSize,
+                      ),
+                      onPressed: () => _editHistoryItem(item),
+                      constraints: AccessibleTapTarget.minimum(),
+                      tooltip: 'Edit in text box',
+                    ),
+
+                    const SizedBox(width: AccessibilityConstants.minSpacing),
+
+                    // Regenerate/Re-speak button
+                    IconButton(
+                      icon: const Icon(
+                        Icons.refresh,
+                        color: Color(0xFF2563EB),
+                        size: AccessibilityConstants.standardIconSize,
+                      ),
+                      onPressed: () => _regenerateFromHistory(item),
+                      constraints: AccessibleTapTarget.minimum(),
+                      tooltip: 'Regenerate audio',
+                    ),
+
+                    const SizedBox(width: AccessibilityConstants.minSpacing),
+
+                    // Add to Quick Phrases button
+                    IconButton(
+                      icon: const Icon(
+                        Icons.add_circle_outline,
+                        color: Color(0xFF2563EB),
+                        size: AccessibilityConstants.standardIconSize,
+                      ),
+                      onPressed: () => _addToQuickPhrases(item.text, cachedAudio: item.cachedAudio),
+                      constraints: AccessibleTapTarget.minimum(),
+                      tooltip: 'Add to Quick Phrases',
+                    ),
+
+                    const SizedBox(width: AccessibilityConstants.minSpacing),
+
+                    // Share audio button (only if cached)
+                    if (item.hasCache)
+                      IconButton(
+                        icon: const Icon(
+                          Icons.share,
+                          color: Color(0xFF2563EB),
+                          size: AccessibilityConstants.standardIconSize,
+                        ),
+                        onPressed: () => _shareAudioFromHistory(item),
+                        constraints: AccessibleTapTarget.minimum(),
+                        tooltip: 'Share audio file',
+                      ),
+
+                    if (item.hasCache) const SizedBox(width: AccessibilityConstants.minSpacing),
+
+                    // Delete button
+                    IconButton(
+                      icon: Icon(
+                        Icons.delete_outline,
+                        color: Colors.red[400],
+                        size: AccessibilityConstants.standardIconSize,
+                      ),
+                      onPressed: () => _confirmDeleteFromHistory(item),
+                      constraints: AccessibleTapTarget.minimum(),
+                      tooltip: 'Delete from history',
+                    ),
+                  ],
                 ),
               ],
             ),

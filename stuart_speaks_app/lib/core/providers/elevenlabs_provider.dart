@@ -323,6 +323,8 @@ class ElevenLabsProvider extends TTSProvider {
       final style = double.tryParse(_config['style'] ?? '0.0') ?? 0.0;
       final useSpeakerBoost = _config['useSpeakerBoost'] == 'true';
 
+      final outputFormat = _config['outputFormat'] ?? 'mp3_44100_128';
+
       final requestBody = {
         'text': request.text,
         'model_id': modelId,
@@ -334,9 +336,17 @@ class ElevenLabsProvider extends TTSProvider {
         },
       };
 
+      // Add output_format as query parameter
+      final uriWithParams = uri.replace(
+        queryParameters: {
+          'output_format': outputFormat,
+          'optimize_streaming_latency': '0',
+        },
+      );
+
       final client = http.Client();
       try {
-        final streamRequest = http.Request('POST', uri);
+        final streamRequest = http.Request('POST', uriWithParams);
         streamRequest.headers['xi-api-key'] = _config['apiKey']!;
         streamRequest.headers['Content-Type'] = 'application/json';
         streamRequest.body = jsonEncode(requestBody);
