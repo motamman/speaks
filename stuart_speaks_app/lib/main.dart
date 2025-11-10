@@ -4,13 +4,6 @@ import 'package:flutter/services.dart';
 import 'features/tts/tts_screen.dart';
 
 void main() {
-  // Lock orientation to portrait for better accessibility
-  WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-  ]);
-
   runApp(const StuartSpeaksApp());
 }
 

@@ -31,9 +31,6 @@ class CartesiaProvider extends TTSProvider {
   bool get supportsStreaming => true;
 
   @override
-  bool get supportsVoiceCloning => false;
-
-  @override
   List<ConfigField> getRequiredConfig() => [
         const ConfigField(
           key: 'apiKey',

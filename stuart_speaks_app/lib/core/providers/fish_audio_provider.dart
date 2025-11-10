@@ -28,9 +28,6 @@ class FishAudioProvider extends TTSProvider {
   bool get supportsStreaming => true;
 
   @override
-  bool get supportsVoiceCloning => true;
-
-  @override
   List<ConfigField> getRequiredConfig() => [
         const ConfigField(
           key: 'apiKey',

@@ -37,9 +37,6 @@ abstract class TTSProvider {
   /// Whether this provider supports streaming audio
   bool get supportsStreaming;
 
-  /// Whether this provider supports custom voice cloning
-  bool get supportsVoiceCloning;
-
   /// Configuration fields required by this provider
   List<ConfigField> getRequiredConfig();
 

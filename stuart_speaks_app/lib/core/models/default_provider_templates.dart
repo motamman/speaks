@@ -14,7 +14,6 @@ class DefaultProviderTemplates {
       description: provider.description,
       baseUrl: 'https://api.cartesia.ai',
       supportsStreaming: provider.supportsStreaming,
-      supportsVoiceCloning: provider.supportsVoiceCloning,
       configFields: provider.getRequiredConfig(),
       endpoints: {
         'tts': '/tts/bytes',
@@ -57,7 +56,6 @@ class DefaultProviderTemplates {
       description: provider.description,
       baseUrl: 'https://api.elevenlabs.io',
       supportsStreaming: provider.supportsStreaming,
-      supportsVoiceCloning: provider.supportsVoiceCloning,
       configFields: provider.getRequiredConfig(),
       endpoints: {
         'tts': '/v1/text-to-speech/{voiceId}',
@@ -95,7 +93,6 @@ class DefaultProviderTemplates {
       description: provider.description,
       baseUrl: 'https://api.fish.audio',
       supportsStreaming: provider.supportsStreaming,
-      supportsVoiceCloning: provider.supportsVoiceCloning,
       configFields: provider.getRequiredConfig(),
       endpoints: {
         'tts': '/v1/tts',

@@ -9,7 +9,6 @@ class ProviderTemplate {
   final String description;
   final String baseUrl;
   final bool supportsStreaming;
-  final bool supportsVoiceCloning;
   final List<ConfigField> configFields;
   final Map<String, String> endpoints;
   final RequestFormat requestFormat;
@@ -21,7 +20,6 @@ class ProviderTemplate {
     required this.description,
     required this.baseUrl,
     required this.supportsStreaming,
-    required this.supportsVoiceCloning,
     required this.configFields,
     required this.endpoints,
     required this.requestFormat,
@@ -38,7 +36,6 @@ class ProviderTemplate {
         'description': description,
         'baseUrl': baseUrl,
         'supportsStreaming': supportsStreaming,
-        'supportsVoiceCloning': supportsVoiceCloning,
         'endpoints': endpoints,
         'configFields': configFields.map((f) => f.toJson(
           value: (configValues != null && !f.isSecret)
@@ -62,7 +59,6 @@ class ProviderTemplate {
       description: provider['description'] as String,
       baseUrl: provider['baseUrl'] as String,
       supportsStreaming: provider['supportsStreaming'] as bool? ?? false,
-      supportsVoiceCloning: provider['supportsVoiceCloning'] as bool? ?? false,
       endpoints: Map<String, String>.from(provider['endpoints'] as Map),
       configFields: configFieldsList
           .map((f) => ConfigFieldJson.fromJson(f as Map<String, dynamic>))

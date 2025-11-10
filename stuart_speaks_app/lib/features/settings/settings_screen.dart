@@ -322,7 +322,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         description: template.description,
         baseUrl: template.baseUrl,
         supportsStreaming: template.supportsStreaming,
-        supportsVoiceCloning: template.supportsVoiceCloning,
         configFields: template.configFields,
         endpoints: template.endpoints,
         requestFormat: template.requestFormat,

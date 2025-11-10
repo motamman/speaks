@@ -28,9 +28,6 @@ class DynamicTTSProvider extends TTSProvider {
   bool get supportsStreaming => template.supportsStreaming;
 
   @override
-  bool get supportsVoiceCloning => template.supportsVoiceCloning;
-
-  @override
   List<ConfigField> getRequiredConfig() => template.configFields;
 
   @override
