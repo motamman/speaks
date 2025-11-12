@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'features/tts/tts_screen.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const StuartSpeaksApp());
 }
 
@@ -17,6 +18,27 @@ class StuartSpeaksApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       // Disable shake-to-undo for accessibility (ALS user cannot shake device)
       builder: (context, child) {
+        // Lock to portrait on phones only (tablets can use landscape)
+        final mediaQuery = MediaQuery.of(context);
+        final shortestSide = mediaQuery.size.shortestSide;
+        final isPhone = shortestSide < 600; // Phones typically < 600dp
+
+        if (isPhone) {
+          // Lock to portrait on phones
+          SystemChrome.setPreferredOrientations([
+            DeviceOrientation.portraitUp,
+            DeviceOrientation.portraitDown,
+          ]);
+        } else {
+          // Allow all orientations on tablets
+          SystemChrome.setPreferredOrientations([
+            DeviceOrientation.portraitUp,
+            DeviceOrientation.portraitDown,
+            DeviceOrientation.landscapeLeft,
+            DeviceOrientation.landscapeRight,
+          ]);
+        }
+
         return Actions(
           actions: {
             UndoTextIntent: DoNothingAction(consumesKey: false),
