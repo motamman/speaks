@@ -150,13 +150,29 @@ class _TTSScreenState extends State<TTSScreen> {
     // Detect word position in current sentence
     final position = _detectWordPosition(text, cursorPos);
 
+    // For position 2, extract the first word for context-aware suggestions
+    String? previousWord;
+    if (position == 2) {
+      previousWord = _extractFirstWord(text, cursorPos);
+    }
+
     setState(() {
       if (currentWord.isEmpty) {
         // No current word - show position-based suggestions
-        _currentSuggestions = tracker.getSuggestions('', limit: 12, position: position);
+        _currentSuggestions = tracker.getSuggestions(
+          '',
+          limit: 12,
+          position: position,
+          previousWord: previousWord,
+        );
       } else {
         // Show word suggestions for the current word with position awareness
-        _currentSuggestions = tracker.getSuggestions(currentWord, limit: 12, position: position);
+        _currentSuggestions = tracker.getSuggestions(
+          currentWord,
+          limit: 12,
+          position: position,
+          previousWord: previousWord,
+        );
       }
     });
   }
@@ -213,6 +229,42 @@ class _TTSScreenState extends State<TTSScreen> {
     }
   }
 
+  /// Extract the first word from the current sentence
+  /// Returns null if no first word can be found
+  String? _extractFirstWord(String text, int cursorPos) {
+    if (text.isEmpty || cursorPos == 0) {
+      return null;
+    }
+
+    final beforeCursor = text.substring(0, cursorPos);
+
+    // Find the start of the current sentence
+    final sentenceStarts = RegExp(r'[.!?]\s*');
+    int sentenceStartPos = 0;
+
+    final matches = sentenceStarts.allMatches(beforeCursor);
+    if (matches.isNotEmpty) {
+      final lastMatch = matches.last;
+      sentenceStartPos = lastMatch.end;
+    }
+
+    // Extract current sentence
+    final currentSentence = beforeCursor.substring(sentenceStartPos).trim();
+
+    if (currentSentence.isEmpty) {
+      return null;
+    }
+
+    // Get first word (clean it from punctuation)
+    final words = currentSentence.split(RegExp(r'\s+'));
+    if (words.isEmpty) {
+      return null;
+    }
+
+    final firstWord = words.first.replaceAll(RegExp(r'[^\w]'), '');
+    return firstWord.isEmpty ? null : firstWord;
+  }
+
   void _onWordSelected(Word word) {
     final text = _textController.text;
     var cursorPos = _textController.selection.baseOffset;
@@ -224,6 +276,12 @@ class _TTSScreenState extends State<TTSScreen> {
 
     // Detect position before inserting the word
     final position = _detectWordPosition(text, cursorPos);
+
+    // Extract previousWord for bigram tracking (position 2)
+    String? previousWord;
+    if (position == 2) {
+      previousWord = _extractFirstWord(text, cursorPos);
+    }
 
     if (cursorPos == 0 || text.isEmpty) {
       // Insert at beginning
@@ -249,8 +307,12 @@ class _TTSScreenState extends State<TTSScreen> {
       }
     }
 
-    // Track word usage with position
-    _usageTracker?.trackWordUsage(word.text, position: position);
+    // Track word usage with position and context
+    _usageTracker?.trackWordUsage(
+      word.text,
+      position: position,
+      previousWord: previousWord,
+    );
   }
 
   Future<void> _onSpeak() async {
@@ -1249,7 +1311,19 @@ class _TTSScreenState extends State<TTSScreen> {
                   _textController.text,
                   _textController.selection.baseOffset,
                 );
-                return _usageTracker?.getSuggestions('', limit: 12, position: position) ?? [];
+                String? previousWord;
+                if (position == 2) {
+                  previousWord = _extractFirstWord(
+                    _textController.text,
+                    _textController.selection.baseOffset,
+                  );
+                }
+                return _usageTracker?.getSuggestions(
+                  '',
+                  limit: 12,
+                  position: position,
+                  previousWord: previousWord,
+                ) ?? [];
               }();
 
         return SizedBox(

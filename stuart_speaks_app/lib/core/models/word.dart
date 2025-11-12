@@ -10,6 +10,10 @@ class Word {
   final List<String> categories;
   final String? customIcon;
 
+  // Bigram tracking: maps previous word -> count of times this word followed it
+  // e.g., for "am": {"I": 50, "you": 20} means "am" followed "I" 50 times, "you" 20 times
+  Map<String, int> followsWords;
+
   Word({
     required this.text,
     required this.phonetic,
@@ -20,7 +24,9 @@ class Word {
     DateTime? lastUsed,
     this.categories = const [],
     this.customIcon,
-  }) : lastUsed = lastUsed ?? DateTime.now();
+    Map<String, int>? followsWords,
+  })  : lastUsed = lastUsed ?? DateTime.now(),
+        followsWords = followsWords ?? {};
 
   /// Calculate priority score based on usage count and recency
   double get score => usageCount * _recencyMultiplier();
@@ -33,7 +39,7 @@ class Word {
   }
 
   /// Increment usage count and update last used timestamp
-  void recordUsage({int? position}) {
+  void recordUsage({int? position, String? previousWord}) {
     usageCount++;
     lastUsed = DateTime.now();
 
@@ -43,19 +49,42 @@ class Word {
         firstWordCount++;
       } else if (position == 2) {
         secondWordCount++;
+        // Track bigram: this word follows previousWord
+        if (previousWord != null) {
+          final key = previousWord.toLowerCase();
+          followsWords[key] = (followsWords[key] ?? 0) + 1;
+        }
       } else {
         otherWordCount++;
       }
     }
   }
 
+  /// Get count of how often this word follows a specific previous word
+  int getFollowCount(String previousWord) {
+    return followsWords[previousWord.toLowerCase()] ?? 0;
+  }
+
   /// Get position-specific score for ranking suggestions
-  double getPositionScore(int position) {
+  /// For position 2, can provide previousWord for context-aware bigram scoring
+  double getPositionScore(int position, {String? previousWord}) {
     double positionCount;
     if (position == 1) {
       positionCount = firstWordCount.toDouble();
     } else if (position == 2) {
-      positionCount = secondWordCount.toDouble();
+      // For second word, prefer bigram statistics if available
+      if (previousWord != null) {
+        final bigramCount = getFollowCount(previousWord);
+        if (bigramCount > 0) {
+          // Use bigram count with high weight (prioritize context-specific usage)
+          positionCount = bigramCount.toDouble() * 2.0;
+        } else {
+          // Fall back to general second-word usage
+          positionCount = secondWordCount.toDouble();
+        }
+      } else {
+        positionCount = secondWordCount.toDouble();
+      }
     } else {
       positionCount = otherWordCount.toDouble();
     }
@@ -82,6 +111,7 @@ class Word {
         'lastUsed': lastUsed.toIso8601String(),
         'categories': categories,
         'customIcon': customIcon,
+        'followsWords': followsWords,
       };
 
   factory Word.fromJson(Map<String, dynamic> json) => Word(
@@ -97,6 +127,9 @@ class Word {
                 .toList() ??
             [],
         customIcon: json['customIcon'] as String?,
+        followsWords: (json['followsWords'] as Map<String, dynamic>?)
+                ?.map((k, v) => MapEntry(k, v as int)) ??
+            {},
       );
 
   @override

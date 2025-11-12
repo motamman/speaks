@@ -215,6 +215,58 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
     _sortWords();
   }
 
+  Future<void> _resetVocabulary() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Reset All Vocabulary?'),
+        content: const Text(
+          'This will delete all vocabulary words and statistics. '
+          'This action cannot be undone.\n\n'
+          'The core vocabulary will be restored.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+            ),
+            child: const Text('Reset All'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      setState(() {
+        _isLoading = true;
+        _searchQuery = '';
+      });
+
+      // Reset statistics
+      if (_tracker != null) {
+        await _tracker!.resetStatistics();
+      }
+
+      // Force reload from SharedPreferences
+      await _loadVocabulary();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('All vocabulary has been reset to core words'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -513,6 +565,32 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
                           );
                         },
                       ),
+          ),
+
+          // Reset button at bottom
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(color: Colors.grey[300]!),
+              ),
+            ),
+            child: SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton.icon(
+                onPressed: _resetVocabulary,
+                icon: const Icon(Icons.delete_forever),
+                label: const Text('Reset All Vocabulary'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red[600],
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ),
+            ),
           ),
         ],
       ),

@@ -23,11 +23,11 @@ class WordUsageTracker {
   }
 
   /// Track when a word is used
-  void trackWordUsage(String wordText, {int? position}) {
+  void trackWordUsage(String wordText, {int? position, String? previousWord}) {
     final key = wordText.toLowerCase();
 
     if (_vocabulary.containsKey(key)) {
-      _vocabulary[key]!.recordUsage(position: position);
+      _vocabulary[key]!.recordUsage(position: position, previousWord: previousWord);
     } else {
       // First time using this word - add to vocabulary
       final newWord = Word(
@@ -38,7 +38,7 @@ class WordUsageTracker {
       );
       // Record position on first use
       if (position != null) {
-        newWord.recordUsage(position: position);
+        newWord.recordUsage(position: position, previousWord: previousWord);
       }
       _vocabulary[key] = newWord;
     }
@@ -54,8 +54,10 @@ class WordUsageTracker {
     for (final sent in sentences) {
       if (sent.trim().isEmpty) continue;
 
-      // Track individual words with position
+      // Track individual words with position and bigrams
       final words = sent.trim().split(RegExp(r'\s+'));
+      String? previousWord;
+
       for (int i = 0; i < words.length; i++) {
         final cleaned = words[i].replaceAll(RegExp(r'[^\w]'), '');
         if (cleaned.isNotEmpty) {
@@ -64,7 +66,16 @@ class WordUsageTracker {
 
           // Position: 1 = first word, 2 = second word, 3+ = other
           final position = i == 0 ? 1 : (i == 1 ? 2 : 3);
-          trackWordUsage(cleaned, position: position);
+
+          // Track bigram: pass previous word when tracking position 2
+          trackWordUsage(
+            cleaned,
+            position: position,
+            previousWord: (position == 2) ? previousWord : null,
+          );
+
+          // Update previousWord for next iteration
+          previousWord = cleaned;
         }
       }
     }
@@ -84,10 +95,16 @@ class WordUsageTracker {
 
   /// Get word suggestions for a given input with position awareness
   /// Position: 1 = first word, 2 = second word, 3+ = other positions
-  List<Word> getSuggestions(String input, {int limit = 12, int? position}) {
+  /// For position 2, can provide previousWord for context-aware bigram suggestions
+  List<Word> getSuggestions(
+    String input, {
+    int limit = 12,
+    int? position,
+    String? previousWord,
+  }) {
     if (input.isEmpty) {
       // Return most frequently used words for this position
-      return _getMostUsedWordsForPosition(limit, position);
+      return _getMostUsedWordsForPosition(limit, position, previousWord: previousWord);
     }
 
     // Filter by prefix match and exclude numerals
@@ -97,7 +114,9 @@ class WordUsageTracker {
 
     // Sort by position-specific usage score if position provided
     if (position != null) {
-      matches.sort((a, b) => b.getPositionScore(position).compareTo(a.getPositionScore(position)));
+      matches.sort((a, b) => b
+          .getPositionScore(position, previousWord: previousWord)
+          .compareTo(a.getPositionScore(position, previousWord: previousWord)));
     } else {
       // Fall back to general usage score
       matches.sort((a, b) => b.score.compareTo(a.score));
@@ -192,14 +211,19 @@ class WordUsageTracker {
     // Track word usage by position
     final Map<String, Map<int, int>> wordPositionCounts = {};
 
+    // Track bigrams: map of "secondWord" -> {"firstWord" -> count}
+    final Map<String, Map<String, int>> bigramCounts = {};
+
     // Split into sentences by common punctuation
     final sentences = text.split(RegExp(r'[.!?]+\s*'));
 
     for (final sent in sentences) {
       if (sent.trim().isEmpty) continue;
 
-      // Track individual words with position
+      // Track individual words with position and bigrams
       final words = sent.trim().split(RegExp(r'\s+'));
+      String? previousWord;
+
       for (int i = 0; i < words.length; i++) {
         final cleaned = words[i].replaceAll(RegExp(r'[^\w]'), '');
         if (cleaned.isEmpty) continue;
@@ -215,6 +239,15 @@ class WordUsageTracker {
         // Track position counts
         wordPositionCounts.putIfAbsent(key, () => {1: 0, 2: 0, 3: 0});
         wordPositionCounts[key]![position] = (wordPositionCounts[key]![position] ?? 0) + 1;
+
+        // Track bigram for second word
+        if (position == 2 && previousWord != null) {
+          bigramCounts.putIfAbsent(key, () => {});
+          bigramCounts[key]![previousWord] = (bigramCounts[key]![previousWord] ?? 0) + 1;
+        }
+
+        // Update previousWord for next iteration
+        previousWord = cleaned.toLowerCase();
       }
     }
 
@@ -238,6 +271,17 @@ class WordUsageTracker {
         existingWord.otherWordCount += positionCounts[3] ?? 0;
         existingWord.usageCount += totalFrequency;
         existingWord.lastUsed = DateTime.now();
+
+        // Update bigram data
+        if (bigramCounts.containsKey(word)) {
+          for (final bigramEntry in bigramCounts[word]!.entries) {
+            final prevWord = bigramEntry.key;
+            final count = bigramEntry.value;
+            existingWord.followsWords[prevWord] =
+                (existingWord.followsWords[prevWord] ?? 0) + count;
+          }
+        }
+
         updated++;
       } else {
         // Add new word with position data
@@ -249,6 +293,7 @@ class WordUsageTracker {
           secondWordCount: positionCounts[2] ?? 0,
           otherWordCount: positionCounts[3] ?? 0,
           lastUsed: DateTime.now(),
+          followsWords: bigramCounts[word] ?? {},
         );
         added++;
       }
@@ -348,15 +393,21 @@ class WordUsageTracker {
   }
 
   /// Get most frequently used words for a specific position
-  List<Word> _getMostUsedWordsForPosition(int limit, int? position) {
+  List<Word> _getMostUsedWordsForPosition(
+    int limit,
+    int? position, {
+    String? previousWord,
+  }) {
     // Filter out numerals
     final words = _vocabulary.values
         .where((word) => !RegExp(r'^\d+$').hasMatch(word.text))
         .toList();
 
     if (position != null) {
-      // Sort by position-specific score
-      words.sort((a, b) => b.getPositionScore(position).compareTo(a.getPositionScore(position)));
+      // Sort by position-specific score (with context if provided)
+      words.sort((a, b) => b
+          .getPositionScore(position, previousWord: previousWord)
+          .compareTo(a.getPositionScore(position, previousWord: previousWord)));
     } else {
       // Fall back to general usage score
       words.sort((a, b) => b.score.compareTo(a.score));
