@@ -34,6 +34,8 @@ class WheelVisualLayer extends StatelessWidget {
         final centerY = wheelSize.height / 2;
         final innerRingDistance = wheelSize.width * 0.25;
         final outerRingDistance = wheelSize.width * 0.45;
+        final innerRingDistanceY = wheelSize.height * 0.25;
+        final outerRingDistanceY = wheelSize.height * 0.45;
 
         return IgnorePointer(
           child: CustomPaint(
@@ -48,6 +50,8 @@ class WheelVisualLayer extends StatelessWidget {
                 centerY: centerY,
                 innerRingDistance: innerRingDistance,
                 outerRingDistance: outerRingDistance,
+                innerRingDistanceY: innerRingDistanceY,
+                outerRingDistanceY: outerRingDistanceY,
               ),
               size: wheelSize,
             ),
@@ -68,6 +72,8 @@ class WheelPainterV2 extends CustomPainter {
   final double centerY;
   final double innerRingDistance;
   final double outerRingDistance;
+  final double innerRingDistanceY;
+  final double outerRingDistanceY;
 
   const WheelPainterV2({
     required this.words,
@@ -79,6 +85,8 @@ class WheelPainterV2 extends CustomPainter {
     required this.centerY,
     required this.innerRingDistance,
     required this.outerRingDistance,
+    required this.innerRingDistanceY,
+    required this.outerRingDistanceY,
   });
 
   @override
@@ -404,15 +412,17 @@ class WheelPainterV2 extends CustomPainter {
     final angleOffset = -pi / 2;
     final angle = angleOffset + (2 * pi / ringSize) * ringIndex;
 
-    final distance = isInnerRing ? innerRingDistance : outerRingDistance;
+    // Use separate X and Y distances for elliptical positioning
+    final distanceX = isInnerRing ? innerRingDistance : outerRingDistance;
+    final distanceY = isInnerRing ? innerRingDistanceY : outerRingDistanceY;
 
-    final x = centerX + (distance * cos(angle));
-    final y = centerY + (distance * sin(angle));
+    final x = centerX + (distanceX * cos(angle));
+    final y = centerY + (distanceY * sin(angle));
 
     return WheelPosition(
       offset: Offset(x, y),
       angle: angle,
-      distance: distance,
+      distance: distanceX, // Use X distance for reference
       isInnerRing: isInnerRing,
       word: words[index],
     );

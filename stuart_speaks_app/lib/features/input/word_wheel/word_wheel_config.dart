@@ -6,6 +6,8 @@ class WordWheelConfig {
   final double centerY;
   final double innerRingDistance;
   final double outerRingDistance;
+  final double innerRingDistanceY; // Vertical radius for inner ring
+  final double outerRingDistanceY; // Vertical radius for outer ring
   final double deadZoneRadius;
   final Duration activationDelay;
   final Duration hideAnimationDuration;
@@ -15,10 +17,13 @@ class WordWheelConfig {
     required this.centerY,
     required this.innerRingDistance,
     required this.outerRingDistance,
+    double? innerRingDistanceY,
+    double? outerRingDistanceY,
     this.deadZoneRadius = 30.0,
     this.activationDelay = const Duration(milliseconds: 400),
     this.hideAnimationDuration = const Duration(milliseconds: 200),
-  });
+  })  : innerRingDistanceY = innerRingDistanceY ?? innerRingDistance,
+        outerRingDistanceY = outerRingDistanceY ?? outerRingDistance;
 
   /// Helper to create responsive config from screen size
   factory WordWheelConfig.responsive(Size screenSize) {
