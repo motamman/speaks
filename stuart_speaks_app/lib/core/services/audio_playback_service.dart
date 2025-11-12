@@ -78,35 +78,53 @@ class AudioPlaybackService {
       // Convert PCM to WAV if needed
       Uint8List playableData = audioBytes;
       Codec codec = _getCodecForMimeType(detectedMimeType);
+      String fileExtension = _getFileExtension(detectedMimeType);
 
       if (detectedMimeType == 'audio/pcm') {
         final pcmSampleRate = sampleRate ?? 44100;
         playableData = _convertPcmToWav(audioBytes, sampleRate: pcmSampleRate);
         codec = Codec.pcm16WAV;
+        fileExtension = 'wav';
       }
 
-      // Write to temp file (flutter_sound requires file path)
+      // Write to temp file with correct extension (critical for Android MediaPlayer)
       final tempDir = await getTemporaryDirectory();
-      _currentTempFile = File('${tempDir.path}/tts_${DateTime.now().millisecondsSinceEpoch}.wav');
+      _currentTempFile = File('${tempDir.path}/tts_${DateTime.now().millisecondsSinceEpoch}.$fileExtension');
       await _currentTempFile!.writeAsBytes(playableData);
 
       await _player!.startPlayer(
         fromURI: _currentTempFile!.path,
         codec: codec,
-      );
-
-      // Listen for completion
-      _player!.onProgress!.listen((event) {
-        if (event.duration != Duration.zero && event.position >= event.duration) {
+        whenFinished: () {
+          if (kDebugMode) {
+            debugPrint('AudioPlaybackService: Playback finished callback');
+          }
           _onPlaybackComplete();
-        }
-      });
+        },
+      );
     } catch (e) {
-      _isPlaying = false;
-      _stateController.add(PlaybackState.stopped);
+      // Critical: Clean up player state on error to prevent corruption
       if (kDebugMode) {
         debugPrint('AudioPlaybackService: Playback error: $e');
       }
+
+      try {
+        await _player?.stopPlayer();
+      } catch (_) {
+        // Ignore errors during cleanup
+      }
+
+      _isPlaying = false;
+      _isPaused = false;
+      _isStreaming = false;
+      _stateController.add(PlaybackState.stopped);
+
+      // Clean up temp file
+      if (_currentTempFile != null && await _currentTempFile!.exists()) {
+        await _currentTempFile!.delete();
+        _currentTempFile = null;
+      }
+
       rethrow;
     }
   }
@@ -251,6 +269,7 @@ class AudioPlaybackService {
   void _onPlaybackComplete() {
     _isPlaying = false;
     _isPaused = false;
+    _isStreaming = false; // Reset streaming state too
     _stateController.add(PlaybackState.completed);
 
     if (kDebugMode) {
@@ -263,6 +282,7 @@ class AudioPlaybackService {
         if (kDebugMode) {
           debugPrint('AudioPlaybackService: Error deleting temp file: $e');
         }
+        return _currentTempFile!; // Fix warning: return value for catchError
       });
       _currentTempFile = null;
     }
@@ -361,6 +381,28 @@ class AudioPlaybackService {
         return Codec.aacADTS;
       default:
         return Codec.pcm16WAV;
+    }
+  }
+
+  /// Get file extension for MIME type (critical for Android MediaPlayer)
+  String _getFileExtension(String mimeType) {
+    switch (mimeType) {
+      case 'audio/mpeg':
+      case 'audio/mp3':
+        return 'mp3';
+      case 'audio/wav':
+      case 'audio/wave':
+        return 'wav';
+      case 'audio/pcm':
+        return 'pcm'; // Will be converted to wav
+      case 'audio/ogg':
+        return 'ogg';
+      case 'audio/flac':
+        return 'flac';
+      case 'audio/aac':
+        return 'aac';
+      default:
+        return 'wav';
     }
   }
 

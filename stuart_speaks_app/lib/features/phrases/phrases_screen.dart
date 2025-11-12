@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:share_plus/share_plus.dart' show Share, XFile;
 
 import '../../core/models/phrase.dart';
+import '../../core/models/tts_request.dart';
 import '../../core/services/audio_playback_service.dart';
 import '../../core/services/tts_provider_manager.dart';
 import '../../core/services/app_logger.dart';
@@ -37,6 +39,8 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
 
   List<Phrase> _phrases = [];
   final Map<String, Uint8List?> _audioCache = {};
+  final Map<String, String?> _audioCacheMimeTypes = {};
+  final Map<String, int?> _audioCacheSampleRates = {};
   bool _isLoading = true;
   String? _currentlySpeaking;
   PhraseExclusionTracker? _exclusionTracker;
@@ -140,31 +144,59 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
 
     for (final key in cacheKeys) {
       final phraseText = key.substring('phrase_audio_'.length);
-      final audioBase64 = prefs.getString(key);
-      if (audioBase64 != null) {
+      final cacheJson = prefs.getString(key);
+      if (cacheJson != null) {
         try {
-          _audioCache[phraseText] = base64Decode(audioBase64);
+          // Try to parse as JSON (new format with metadata)
+          final cacheData = jsonDecode(cacheJson) as Map<String, dynamic>;
+          final audioBase64 = cacheData['audioBase64'] as String?;
+          final mimeType = cacheData['mimeType'] as String?;
+          final sampleRate = cacheData['sampleRate'] as int?;
+
+          if (audioBase64 != null) {
+            _audioCache[phraseText] = base64Decode(audioBase64);
+            _audioCacheMimeTypes[phraseText] = mimeType;
+            _audioCacheSampleRates[phraseText] = sampleRate;
+          } else {
+            corruptedKeys.add(key);
+          }
         } catch (e) {
-          _logger.warning('Failed to load cached audio for: $phraseText', error: e);
-          corruptedKeys.add(key);
+          // Try old format (plain base64 string) - mark for removal
+          try {
+            base64Decode(cacheJson);
+            _logger.info('Found old format cache for: $phraseText, will be regenerated');
+            corruptedKeys.add(key);
+          } catch (_) {
+            _logger.warning('Failed to load cached audio for: $phraseText', error: e);
+            corruptedKeys.add(key);
+          }
         }
       }
     }
 
-    // Clean up corrupted entries
+    // Clean up corrupted/old format entries
     if (corruptedKeys.isNotEmpty) {
-      _logger.info('Cleaning up ${corruptedKeys.length} corrupted cache entries');
+      _logger.info('Cleaning up ${corruptedKeys.length} old/corrupted cache entries');
       for (final key in corruptedKeys) {
         await prefs.remove(key);
       }
     }
   }
 
-  /// Save audio to persistent cache
-  Future<void> _saveAudioToCache(String phraseText, Uint8List audioBytes) async {
+  /// Save audio to persistent cache with metadata
+  Future<void> _saveAudioToCache(
+    String phraseText,
+    Uint8List audioBytes, {
+    String? mimeType,
+    int? sampleRate,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
-    final audioBase64 = base64Encode(audioBytes);
-    await prefs.setString('phrase_audio_$phraseText', audioBase64);
+    final cacheData = {
+      'audioBase64': base64Encode(audioBytes),
+      'mimeType': mimeType,
+      'sampleRate': sampleRate,
+    };
+    await prefs.setString('phrase_audio_$phraseText', jsonEncode(cacheData));
   }
 
   Future<void> _deletePhrase(Phrase phrase) async {
@@ -187,8 +219,10 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
       _phrases.remove(phrase);
     });
 
-    // Also remove from audio cache (both memory and persistent)
+    // Also remove from audio cache and metadata (both memory and persistent)
     _audioCache.remove(phrase.text);
+    _audioCacheMimeTypes.remove(phrase.text);
+    _audioCacheSampleRates.remove(phrase.text);
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('phrase_audio_${phrase.text}');
   }
@@ -270,21 +304,61 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
     });
 
     try {
-      // Remove cached audio
+      // Remove cached audio and metadata
       _audioCache.remove(phrase.text);
+      _audioCacheMimeTypes.remove(phrase.text);
+      _audioCacheSampleRates.remove(phrase.text);
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove('phrase_audio_${phrase.text}');
 
-      // Generate fresh audio
+      // Generate fresh audio using streaming if supported
       _logger.info('Generating fresh speech for: ${phrase.text}');
-      final audioBytes = await widget.providerManager.generateSpeech(phrase.text);
-      _audioCache[phrase.text] = audioBytes;
 
-      // Save to persistent storage
-      await _saveAudioToCache(phrase.text, audioBytes);
+      final provider = widget.providerManager.activeProvider!;
+      Uint8List audioBytes;
+      String? mimeType;
+      int? sampleRate;
+
+      // Use streaming if supported (same logic as _speakPhrase)
+      if (provider.supportsStreaming) {
+        final stream = provider.generateSpeechStream(
+          TTSRequest(text: phrase.text),
+        );
+
+        if (stream != null) {
+          // Collect all chunks
+          final chunks = <int>[];
+          await for (final chunk in stream) {
+            chunks.addAll(chunk);
+          }
+          audioBytes = Uint8List.fromList(chunks);
+
+          // Determine MIME type based on provider
+          if (provider.id == 'cartesia') {
+            mimeType = 'audio/pcm';
+            sampleRate = int.tryParse(provider.config['sampleRate'] ?? '44100') ?? 44100;
+          } else if (provider.id == 'fish_audio' || provider.id == 'elevenlabs') {
+            mimeType = 'audio/mpeg';
+          }
+        } else {
+          // Fallback to non-streaming
+          audioBytes = await widget.providerManager.generateSpeech(phrase.text);
+        }
+      } else {
+        // Non-streaming
+        audioBytes = await widget.providerManager.generateSpeech(phrase.text);
+      }
+
+      // Cache with metadata
+      _audioCache[phrase.text] = audioBytes;
+      _audioCacheMimeTypes[phrase.text] = mimeType;
+      _audioCacheSampleRates[phrase.text] = sampleRate;
+
+      // Save to persistent storage with metadata
+      await _saveAudioToCache(phrase.text, audioBytes, mimeType: mimeType, sampleRate: sampleRate);
       _logger.debug('Cached fresh audio for: ${phrase.text}');
 
-      await widget.audioService.play(audioBytes);
+      await widget.audioService.play(audioBytes, mimeType: mimeType, sampleRate: sampleRate);
 
       // Track usage
       await _trackUsage(phrase);
@@ -309,8 +383,10 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
 
   /// Edit phrase - removes cache and returns to main screen with phrase in text box
   void _editPhrase(Phrase phrase) {
-    // Remove cached audio
+    // Remove cached audio and metadata
     _audioCache.remove(phrase.text);
+    _audioCacheMimeTypes.remove(phrase.text);
+    _audioCacheSampleRates.remove(phrase.text);
     SharedPreferences.getInstance().then((prefs) {
       prefs.remove('phrase_audio_${phrase.text}');
     });
@@ -369,18 +445,58 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
       final cachedAudio = _audioCache[phrase.text];
       if (cachedAudio != null) {
         _logger.debug('Playing cached audio for: ${phrase.text}');
-        await widget.audioService.play(cachedAudio);
+        final mimeType = _audioCacheMimeTypes[phrase.text];
+        final sampleRate = _audioCacheSampleRates[phrase.text];
+        await widget.audioService.play(cachedAudio, mimeType: mimeType, sampleRate: sampleRate);
       } else {
-        // Generate and cache
+        // Generate and cache using streaming if supported (like main screen)
         _logger.info('Generating speech for: ${phrase.text}');
-        final audioBytes = await widget.providerManager.generateSpeech(phrase.text);
-        _audioCache[phrase.text] = audioBytes;
 
-        // Save to persistent storage
-        await _saveAudioToCache(phrase.text, audioBytes);
+        final provider = widget.providerManager.activeProvider!;
+        Uint8List audioBytes;
+        String? mimeType;
+        int? sampleRate;
+
+        // Use streaming if supported for lower latency (same as main screen)
+        if (provider.supportsStreaming) {
+          final stream = provider.generateSpeechStream(
+            TTSRequest(text: phrase.text),
+          );
+
+          if (stream != null) {
+            // Collect all chunks
+            final chunks = <int>[];
+            await for (final chunk in stream) {
+              chunks.addAll(chunk);
+            }
+            audioBytes = Uint8List.fromList(chunks);
+
+            // Determine MIME type based on provider (same logic as main screen)
+            if (provider.id == 'cartesia') {
+              mimeType = 'audio/pcm';
+              sampleRate = int.tryParse(provider.config['sampleRate'] ?? '44100') ?? 44100;
+            } else if (provider.id == 'fish_audio' || provider.id == 'elevenlabs') {
+              mimeType = 'audio/mpeg';
+            }
+          } else {
+            // Fallback to non-streaming
+            audioBytes = await widget.providerManager.generateSpeech(phrase.text);
+          }
+        } else {
+          // Non-streaming
+          audioBytes = await widget.providerManager.generateSpeech(phrase.text);
+        }
+
+        // Cache with metadata
+        _audioCache[phrase.text] = audioBytes;
+        _audioCacheMimeTypes[phrase.text] = mimeType;
+        _audioCacheSampleRates[phrase.text] = sampleRate;
+
+        // Save to persistent storage with metadata
+        await _saveAudioToCache(phrase.text, audioBytes, mimeType: mimeType, sampleRate: sampleRate);
         _logger.debug('Cached audio for: ${phrase.text}');
 
-        await widget.audioService.play(audioBytes);
+        await widget.audioService.play(audioBytes, mimeType: mimeType, sampleRate: sampleRate);
       }
 
       // Track usage

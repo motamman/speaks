@@ -217,6 +217,18 @@ class CartesiaProvider extends TTSProvider {
       final speedValue = double.tryParse(_config['speedValue'] ?? '1.0') ?? 1.0;
       final volume = double.tryParse(_config['volume'] ?? '1.0') ?? 1.0;
 
+      // Build output_format based on container type
+      final outputFormat = <String, dynamic>{
+        'container': _config['container'],
+        'sample_rate': sampleRate,
+      };
+
+      // Only include encoding for raw/wav containers, not for mp3
+      final container = _config['container'];
+      if (container == 'raw' || container == 'wav') {
+        outputFormat['encoding'] = _config['encoding'];
+      }
+
       final requestBody = <String, dynamic>{
         'transcript': request.text,
         'model_id': _config['modelId'],
@@ -224,11 +236,7 @@ class CartesiaProvider extends TTSProvider {
           'mode': 'id',
           'id': request.voiceId ?? _config['voiceId'],
         },
-        'output_format': {
-          'container': _config['container'],
-          'encoding': _config['encoding'],
-          'sample_rate': sampleRate,
-        },
+        'output_format': outputFormat,
         'language': _config['language'],
       };
 
