@@ -603,18 +603,18 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
                 ],
               ),
             )
-          : GridView.builder(
+          : SingleChildScrollView(
               padding: const EdgeInsets.all(16),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: 1.2,
+              child: Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: _phrases.map((phrase) {
+                  return SizedBox(
+                    width: (MediaQuery.of(context).size.width - 44) / 2, // 16 padding each side + 12 spacing
+                    child: _buildPhraseButton(phrase),
+                  );
+                }).toList(),
               ),
-              itemCount: _phrases.length,
-              itemBuilder: (context, index) {
-                return _buildPhraseButton(_phrases[index]);
-              },
             ),
     );
   }
@@ -642,6 +642,7 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
             borderRadius: BorderRadius.circular(12),
           ),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
               // Top row with badges
               Row(
@@ -684,34 +685,32 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
               ),
 
               // Main content area with faint play icon
-              Expanded(
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8.0),
                 child: Stack(
+                  alignment: Alignment.center,
                   children: [
                     // Faint play icon background
-                    Center(
-                      child: Icon(
-                        Icons.play_circle_outline,
-                        size: 60,
-                        color: Colors.grey.withValues(alpha: 0.1),
-                      ),
+                    Icon(
+                      Icons.play_circle_outline,
+                      size: 60,
+                      color: Colors.grey.withValues(alpha: 0.1),
                     ),
 
                     // Text
-                    Center(
-                      child: isSpeaking
-                          ? const CircularProgressIndicator()
-                          : Text(
-                              phrase.text,
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF1E3A8A),
-                              ),
-                              textAlign: TextAlign.center,
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
+                    isSpeaking
+                        ? const CircularProgressIndicator()
+                        : Text(
+                            phrase.text,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF1E3A8A),
                             ),
-                    ),
+                            textAlign: TextAlign.center,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                   ],
                 ),
               ),
@@ -719,39 +718,46 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
               // Action buttons at bottom
               const Divider(height: 8),
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
                   // Edit button
-                  _buildIconButton(
-                    icon: Icons.edit,
-                    color: const Color(0xFF2563EB),
-                    onPressed: () => _editPhrase(phrase),
-                    tooltip: 'Edit',
+                  Expanded(
+                    child: _buildIconButton(
+                      icon: Icons.edit,
+                      color: const Color(0xFF2563EB),
+                      onPressed: () => _editPhrase(phrase),
+                      tooltip: 'Edit',
+                    ),
                   ),
 
                   // Regenerate button
-                  _buildIconButton(
-                    icon: Icons.refresh,
-                    color: const Color(0xFF2563EB),
-                    onPressed: () => _replayPhrase(phrase),
-                    tooltip: 'Regenerate',
+                  Expanded(
+                    child: _buildIconButton(
+                      icon: Icons.refresh,
+                      color: const Color(0xFF2563EB),
+                      onPressed: () => _replayPhrase(phrase),
+                      tooltip: 'Regenerate',
+                    ),
                   ),
 
                   // Share button (only if cached)
                   if (hasCache)
-                    _buildIconButton(
-                      icon: Icons.share,
-                      color: const Color(0xFF2563EB),
-                      onPressed: () => _shareAudio(phrase),
-                      tooltip: 'Share',
+                    Expanded(
+                      child: _buildIconButton(
+                        icon: Icons.share,
+                        color: const Color(0xFF2563EB),
+                        onPressed: () => _shareAudio(phrase),
+                        tooltip: 'Share',
+                      ),
                     ),
 
                   // Delete button
-                  _buildIconButton(
-                    icon: Icons.delete_outline,
-                    color: Colors.red[400]!,
-                    onPressed: () => _confirmDeletePhrase(phrase),
-                    tooltip: 'Delete',
+                  Expanded(
+                    child: _buildIconButton(
+                      icon: Icons.delete_outline,
+                      color: Colors.red[400]!,
+                      onPressed: () => _confirmDeletePhrase(phrase),
+                      tooltip: 'Delete',
+                    ),
                   ),
                 ],
               ),
@@ -774,8 +780,8 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
       onPressed: onPressed,
       tooltip: tooltip,
       constraints: const BoxConstraints(
-        minWidth: AccessibilityConstants.minTapTargetSize,
-        minHeight: AccessibilityConstants.minTapTargetSize,
+        minWidth: 36,
+        minHeight: 36,
       ),
       padding: EdgeInsets.zero,
     );
