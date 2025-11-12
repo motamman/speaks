@@ -1100,54 +1100,88 @@ class _TTSScreenState extends State<TTSScreen> {
             margin: const EdgeInsets.only(top: 8),
             height: 50,
             child: _currentSuggestions.isNotEmpty
-                ? ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: _currentSuggestions.take(8).length,
-                    itemBuilder: (context, index) {
-                      final word = _currentSuggestions[index];
-                      return Padding(
-                        padding: EdgeInsets.only(
-                          right: 8.0,
-                          left: index == 0 ? 0 : 0,
-                        ),
-                        child: Material(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(8),
-                          elevation: 2,
-                          child: InkWell(
-                            onTap: () => _onWordSelected(word),
-                            borderRadius: BorderRadius.circular(8),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 12,
-                              ),
-                              decoration: BoxDecoration(
-                                border: Border.all(
-                                  color: index == 0
-                                      ? const Color(0xFF2563EB)
-                                      : Colors.grey[300]!,
-                                  width: index == 0 ? 2 : 1,
-                                ),
+                ? Stack(
+                    children: [
+                      ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _currentSuggestions.length, // Show all 12 suggestions
+                        itemBuilder: (context, index) {
+                          final word = _currentSuggestions[index];
+                          return Padding(
+                            padding: EdgeInsets.only(
+                              right: 8.0,
+                              left: index == 0 ? 0 : 0,
+                            ),
+                            child: Material(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(8),
+                              elevation: 2,
+                              child: InkWell(
+                                onTap: () => _onWordSelected(word),
                                 borderRadius: BorderRadius.circular(8),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 12,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    border: Border.all(
+                                      color: index == 0
+                                          ? const Color(0xFF2563EB)
+                                          : Colors.grey[300]!,
+                                      width: index == 0 ? 2 : 1,
+                                    ),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    word.text,
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: index == 0
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
+                                      color: index == 0
+                                          ? const Color(0xFF2563EB)
+                                          : Colors.black87,
+                                    ),
+                                  ),
+                                ),
                               ),
-                              child: Text(
-                                word.text,
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: index == 0
-                                      ? FontWeight.bold
-                                      : FontWeight.normal,
-                                  color: index == 0
-                                      ? const Color(0xFF2563EB)
-                                      : Colors.black87,
+                            ),
+                          );
+                        },
+                      ),
+
+                      // Right fade gradient and arrow to indicate more content
+                      if (_currentSuggestions.length > 4)
+                        Positioned(
+                          right: 0,
+                          top: 0,
+                          bottom: 0,
+                          child: IgnorePointer(
+                            child: Container(
+                              width: 60,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.centerLeft,
+                                  end: Alignment.centerRight,
+                                  colors: [
+                                    Colors.white.withOpacity(0.0),
+                                    Colors.white.withOpacity(0.95),
+                                  ],
+                                ),
+                              ),
+                              child: const Center(
+                                child: Icon(
+                                  Icons.chevron_right,
+                                  color: Color(0xFF2563EB),
+                                  size: 24,
                                 ),
                               ),
                             ),
                           ),
                         ),
-                      );
-                    },
+                    ],
                   )
                 : const SizedBox.shrink(), // Empty space when no suggestions
           ),
@@ -1194,17 +1228,17 @@ class _TTSScreenState extends State<TTSScreen> {
     );
   }
 
-  /// Build word wheel - scales to fill available area
+  /// Build word wheel - scales to fill available area (elliptical)
   Widget _buildWordWheel() {
     return LayoutBuilder(
       builder: (context, constraints) {
-        // Calculate the size to fill the available space
-        // Use the smaller dimension to maintain aspect ratio
-        final size = constraints.maxHeight.isFinite && constraints.maxWidth.isFinite
-            ? (constraints.maxHeight < constraints.maxWidth
-                ? constraints.maxHeight
-                : constraints.maxWidth) * 0.9  // 90% of available space for padding
-            : 400.0;  // fallback size
+        // Use full available width and height for elliptical wheel
+        final width = constraints.maxWidth.isFinite
+            ? constraints.maxWidth * 0.9  // 90% of available width
+            : 400.0;
+        final height = constraints.maxHeight.isFinite
+            ? constraints.maxHeight * 0.9  // 90% of available height
+            : 400.0;
 
         // Use current suggestions (already position-aware from _onTextChanged)
         // Fallback: if empty, get position-aware suggestions
@@ -1219,8 +1253,8 @@ class _TTSScreenState extends State<TTSScreen> {
               }();
 
         return SizedBox(
-          width: size,
-          height: size,
+          width: width,
+          height: height,
           child: WordWheelWidgetV2(
             words: words,
             onWordSelected: _onWordSelected,

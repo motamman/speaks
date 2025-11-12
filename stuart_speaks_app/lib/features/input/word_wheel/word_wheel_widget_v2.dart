@@ -57,6 +57,8 @@ class _WordWheelWidgetV2State extends State<WordWheelWidgetV2> {
         centerY: _wheelSize.height / 2,
         innerRingDistance: _wheelSize.width * 0.25,
         outerRingDistance: _wheelSize.width * 0.45,
+        innerRingDistanceY: _wheelSize.height * 0.25,
+        outerRingDistanceY: _wheelSize.height * 0.45,
       );
 
       _controller = WordWheelController(
@@ -84,6 +86,8 @@ class _WordWheelWidgetV2State extends State<WordWheelWidgetV2> {
           centerY: _wheelSize.height / 2,
           innerRingDistance: _wheelSize.width * 0.25,
           outerRingDistance: _wheelSize.width * 0.45,
+          innerRingDistanceY: _wheelSize.height * 0.25,
+          outerRingDistanceY: _wheelSize.height * 0.45,
         );
 
         // Create new controller with updated config
@@ -109,26 +113,9 @@ class _WordWheelWidgetV2State extends State<WordWheelWidgetV2> {
   }
 
   Size _calculateWheelSize() {
-    final mediaQuery = MediaQuery.maybeOf(context);
-    if (mediaQuery == null) {
-      // Default size during initial build
-      return const Size(400, 400);
-    }
-
-    final screenSize = mediaQuery.size;
-    final shortestSide = screenSize.shortestSide;
-
-    // Adaptive sizing
-    if (shortestSide < 375) {
-      // Small phones (iPhone SE)
-      return const Size(320, 320);
-    } else if (shortestSide < 768) {
-      // Regular phones
-      return const Size(400, 400);
-    } else {
-      // Tablets
-      return const Size(500, 500);
-    }
+    // The wheel will be sized by LayoutBuilder in tts_screen.dart
+    // This is just a fallback - return a reasonable default
+    return const Size(400, 400);
   }
 
   void _handleActivated() {
@@ -175,6 +162,37 @@ class _WordWheelWidgetV2State extends State<WordWheelWidgetV2> {
         if (constraints.maxWidth.isFinite && constraints.maxHeight.isFinite) {
           // Parent provided constraints - use them
           effectiveSize = Size(constraints.maxWidth, constraints.maxHeight);
+
+          // Update wheel size and controller if dimensions changed
+          if (effectiveSize != _wheelSize) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                setState(() {
+                  _wheelSize = effectiveSize;
+
+                  // Recreate controller with new elliptical config
+                  final newConfig = WordWheelConfig(
+                    centerX: _wheelSize.width / 2,
+                    centerY: _wheelSize.height / 2,
+                    innerRingDistance: _wheelSize.width * 0.25,
+                    outerRingDistance: _wheelSize.width * 0.45,
+                    innerRingDistanceY: _wheelSize.height * 0.25,
+                    outerRingDistanceY: _wheelSize.height * 0.45,
+                  );
+
+                  _controller?.dispose();
+                  _controller = WordWheelController(
+                    config: newConfig,
+                    words: widget.words,
+                  )
+                    ..onWordSelected = widget.onWordSelected
+                    ..onActivated = _handleActivated
+                    ..onHidden = _handleHidden
+                    ..addListener(_handleControllerChange);
+                });
+              }
+            });
+          }
         } else {
           // No parent constraints - use calculated size
           effectiveSize = _wheelSize;

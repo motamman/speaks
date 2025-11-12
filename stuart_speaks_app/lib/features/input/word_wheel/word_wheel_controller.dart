@@ -94,10 +94,16 @@ class WordWheelController extends ChangeNotifier {
     final center = Offset(config.centerX, config.centerY);
     final dragVector = dragPos - center;
     final angle = atan2(dragVector.dy, dragVector.dx);
-    final distance = dragVector.distance;
+
+    // Calculate elliptical distance (normalized)
+    final dx = dragVector.dx;
+    final dy = dragVector.dy;
+    final radiusX = config.outerRingDistance;
+    final radiusY = config.outerRingDistanceY;
+    final ellipticalDistance = sqrt((dx * dx) / (radiusX * radiusX) + (dy * dy) / (radiusY * radiusY)) * radiusX;
 
     // Ignore if in dead zone
-    if (distance < config.deadZoneRadius) return null;
+    if (ellipticalDistance < config.deadZoneRadius) return null;
 
     final visible = visibleWords;
     if (visible.isEmpty) return null;
@@ -122,9 +128,9 @@ class WordWheelController extends ChangeNotifier {
         final outerBoundary = config.outerRingDistance + 40; // 220 in original
 
         if (isInnerRing) {
-          inCorrectRing = distance < innerBoundary;
+          inCorrectRing = ellipticalDistance < innerBoundary;
         } else {
-          inCorrectRing = distance >= innerBoundary && distance < outerBoundary;
+          inCorrectRing = ellipticalDistance >= innerBoundary && ellipticalDistance < outerBoundary;
         }
       }
 
@@ -140,14 +146,21 @@ class WordWheelController extends ChangeNotifier {
 
   void _checkExpandCollapse(Offset position) {
     final center = Offset(config.centerX, config.centerY);
-    final distance = (position - center).distance;
+    final dragVector = position - center;
+
+    // Calculate elliptical distance for expand/collapse
+    final dx = dragVector.dx;
+    final dy = dragVector.dy;
+    final radiusX = config.outerRingDistance;
+    final radiusY = config.outerRingDistanceY;
+    final ellipticalDistance = sqrt((dx * dx) / (radiusX * radiusX) + (dy * dy) / (radiusY * radiusY)) * radiusX;
 
     final expandThreshold = config.innerRingDistance + 50; // ~150 in original
     final collapseThreshold = 80.0;
 
-    if (distance > expandThreshold && !_isExpanded && _words.length > 4) {
+    if (ellipticalDistance > expandThreshold && !_isExpanded && _words.length > 4) {
       _isExpanded = true;
-    } else if (distance < collapseThreshold && _isExpanded) {
+    } else if (ellipticalDistance < collapseThreshold && _isExpanded) {
       _isExpanded = false;
     }
   }
