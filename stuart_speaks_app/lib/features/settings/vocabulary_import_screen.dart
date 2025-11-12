@@ -40,7 +40,10 @@ class _VocabularyImportScreenState extends State<VocabularyImportScreen> {
 
       final file = File(result.files.single.path!);
 
-      // Analyze text
+      // Read raw text for position-aware import
+      final rawText = await file.readAsString();
+
+      // Analyze text for preview purposes
       final analysisResult = await _analyzer.analyzeFile(
         file,
         excludeStopWords: true,
@@ -53,7 +56,7 @@ class _VocabularyImportScreenState extends State<VocabularyImportScreen> {
         final confirm = await _showPreviewDialog(analysisResult);
 
         if (confirm == true) {
-          await _importWords(analysisResult);
+          await _importWordsFromText(rawText);
         }
       }
     } catch (e) {
@@ -141,6 +144,54 @@ class _VocabularyImportScreenState extends State<VocabularyImportScreen> {
     );
   }
 
+  /// Import words from raw text with position tracking
+  Future<void> _importWordsFromText(String text) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final tracker = WordUsageTracker(prefs);
+      await tracker.initialize();
+
+      final stats = await tracker.importFromText(
+        text,
+        minFrequency: 1, // Import all words
+      );
+
+      setState(() {
+        _lastImportStats = stats;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '✓ Imported: ${stats.added} new words, ${stats.updated} updated (with position data)',
+            ),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 4),
+            action: SnackBarAction(
+              label: 'Done',
+              textColor: Colors.white,
+              onPressed: () {
+                // Pop with result indicating successful import
+                Navigator.pop(context, true);
+              },
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Import failed: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Legacy method - kept for compatibility
   Future<void> _importWords(TextAnalysisResult result) async {
     try {
       final prefs = await SharedPreferences.getInstance();

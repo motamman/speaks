@@ -132,7 +132,12 @@ class _TTSScreenState extends State<TTSScreen> {
     if (tracker == null) return;
 
     final text = _textController.text;
-    final cursorPos = _textController.selection.baseOffset;
+    var cursorPos = _textController.selection.baseOffset;
+
+    // Handle invalid cursor position
+    if (cursorPos < 0 || cursorPos > text.length) {
+      cursorPos = text.length;
+    }
 
     // Get the current word being typed
     String currentWord = '';
@@ -142,20 +147,83 @@ class _TTSScreenState extends State<TTSScreen> {
       currentWord = words.isNotEmpty ? words.last : '';
     }
 
+    // Detect word position in current sentence
+    final position = _detectWordPosition(text, cursorPos);
+
     setState(() {
       if (currentWord.isEmpty) {
-        // No current word - clear suggestions
-        _currentSuggestions = [];
+        // No current word - show position-based suggestions
+        _currentSuggestions = tracker.getSuggestions('', limit: 12, position: position);
       } else {
-        // Show word suggestions for the current word
-        _currentSuggestions = tracker.getSuggestions(currentWord);
+        // Show word suggestions for the current word with position awareness
+        _currentSuggestions = tracker.getSuggestions(currentWord, limit: 12, position: position);
       }
     });
   }
 
+  /// Detect word position in current sentence
+  /// Returns: 1 = first word, 2 = second word, 3 = third+ word
+  int _detectWordPosition(String text, int cursorPos) {
+    // Validate cursor position (should be done by caller, but double-check)
+    if (cursorPos < 0 || cursorPos > text.length) {
+      cursorPos = text.length;
+    }
+
+    if (text.isEmpty || cursorPos == 0) {
+      return 1; // First word (empty text box)
+    }
+
+    final beforeCursor = text.substring(0, cursorPos);
+
+    // Find the start of the current sentence by looking for sentence-ending punctuation
+    final sentenceStarts = RegExp(r'[.!?]\s*');
+    int sentenceStartPos = 0;
+
+    // Find last occurrence of sentence-ending punctuation before cursor
+    final matches = sentenceStarts.allMatches(beforeCursor);
+    if (matches.isNotEmpty) {
+      final lastMatch = matches.last;
+      sentenceStartPos = lastMatch.end; // Position after punctuation and space
+    }
+
+    // Extract current sentence (from last punctuation to cursor)
+    final currentSentenceRaw = beforeCursor.substring(sentenceStartPos);
+    final endsWithSpace = currentSentenceRaw.endsWith(' ');
+    final currentSentence = currentSentenceRaw.trim();
+
+    if (currentSentence.isEmpty) {
+      return 1; // Start of new sentence
+    }
+
+    // Count words in current sentence
+    final words = currentSentence.split(RegExp(r'\s+'));
+    final wordCount = words.where((w) => w.isNotEmpty).length;
+
+    // Return position: 1 = first, 2 = second, 3+ = other
+    if (wordCount == 0) {
+      return 1;
+    } else if (wordCount == 1) {
+      // If typing first word or just finished first word
+      return endsWithSpace ? 2 : 1;
+    } else if (wordCount == 2) {
+      // If typing second word or just finished second word
+      return endsWithSpace ? 3 : 2;
+    } else {
+      return 3; // Third word or beyond
+    }
+  }
+
   void _onWordSelected(Word word) {
     final text = _textController.text;
-    final cursorPos = _textController.selection.baseOffset;
+    var cursorPos = _textController.selection.baseOffset;
+
+    // Handle invalid cursor position
+    if (cursorPos < 0 || cursorPos > text.length) {
+      cursorPos = text.length;
+    }
+
+    // Detect position before inserting the word
+    final position = _detectWordPosition(text, cursorPos);
 
     if (cursorPos == 0 || text.isEmpty) {
       // Insert at beginning
@@ -181,8 +249,8 @@ class _TTSScreenState extends State<TTSScreen> {
       }
     }
 
-    // Track word usage
-    _usageTracker?.trackWordUsage(word.text);
+    // Track word usage with position
+    _usageTracker?.trackWordUsage(word.text, position: position);
   }
 
   Future<void> _onSpeak() async {
@@ -1138,13 +1206,23 @@ class _TTSScreenState extends State<TTSScreen> {
                 : constraints.maxWidth) * 0.9  // 90% of available space for padding
             : 400.0;  // fallback size
 
+        // Use current suggestions (already position-aware from _onTextChanged)
+        // Fallback: if empty, get position-aware suggestions
+        final words = _currentSuggestions.isNotEmpty
+            ? _currentSuggestions
+            : () {
+                final position = _detectWordPosition(
+                  _textController.text,
+                  _textController.selection.baseOffset,
+                );
+                return _usageTracker?.getSuggestions('', limit: 12, position: position) ?? [];
+              }();
+
         return SizedBox(
           width: size,
           height: size,
           child: WordWheelWidgetV2(
-            words: _currentSuggestions.isEmpty
-                ? (_usageTracker?.getSuggestions('', limit: 12) ?? [])
-                : _currentSuggestions,
+            words: words,
             onWordSelected: _onWordSelected,
             onWheelShown: () {},
             onWheelHidden: () {},

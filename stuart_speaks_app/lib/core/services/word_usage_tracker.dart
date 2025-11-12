@@ -23,19 +23,24 @@ class WordUsageTracker {
   }
 
   /// Track when a word is used
-  void trackWordUsage(String wordText) {
+  void trackWordUsage(String wordText, {int? position}) {
     final key = wordText.toLowerCase();
 
     if (_vocabulary.containsKey(key)) {
-      _vocabulary[key]!.recordUsage();
+      _vocabulary[key]!.recordUsage(position: position);
     } else {
       // First time using this word - add to vocabulary
-      _vocabulary[key] = Word(
+      final newWord = Word(
         text: wordText,
         phonetic: _generateSimplePhonetic(wordText),
         usageCount: 1,
         lastUsed: DateTime.now(),
       );
+      // Record position on first use
+      if (position != null) {
+        newWord.recordUsage(position: position);
+      }
+      _vocabulary[key] = newWord;
     }
 
     _saveVocabulary();
@@ -43,12 +48,24 @@ class WordUsageTracker {
 
   /// Track a complete sentence/phrase
   void trackSentence(String sentence) {
-    // Track individual words
-    final words = sentence.split(RegExp(r'\s+'));
-    for (final word in words) {
-      final cleaned = word.replaceAll(RegExp(r'[^\w]'), '');
-      if (cleaned.isNotEmpty) {
-        trackWordUsage(cleaned);
+    // Split into sentences by common punctuation
+    final sentences = sentence.split(RegExp(r'[.!?]+\s*'));
+
+    for (final sent in sentences) {
+      if (sent.trim().isEmpty) continue;
+
+      // Track individual words with position
+      final words = sent.trim().split(RegExp(r'\s+'));
+      for (int i = 0; i < words.length; i++) {
+        final cleaned = words[i].replaceAll(RegExp(r'[^\w]'), '');
+        if (cleaned.isNotEmpty) {
+          // Skip numerals
+          if (RegExp(r'^\d+$').hasMatch(cleaned.toLowerCase())) continue;
+
+          // Position: 1 = first word, 2 = second word, 3+ = other
+          final position = i == 0 ? 1 : (i == 1 ? 2 : 3);
+          trackWordUsage(cleaned, position: position);
+        }
       }
     }
 
@@ -65,20 +82,26 @@ class WordUsageTracker {
     }
   }
 
-  /// Get word suggestions for a given input
-  List<Word> getSuggestions(String input, {int limit = 12}) {
+  /// Get word suggestions for a given input with position awareness
+  /// Position: 1 = first word, 2 = second word, 3+ = other positions
+  List<Word> getSuggestions(String input, {int limit = 12, int? position}) {
     if (input.isEmpty) {
-      // Return most frequently used words
-      return _getMostUsedWords(limit);
+      // Return most frequently used words for this position
+      return _getMostUsedWordsForPosition(limit, position);
     }
 
-    // Filter by prefix match
+    // Filter by prefix match and exclude numerals
     final matches = _vocabulary.values
-        .where((word) => word.matches(input))
+        .where((word) => word.matches(input) && !RegExp(r'^\d+$').hasMatch(word.text))
         .toList();
 
-    // Sort by usage score (frequency + recency)
-    matches.sort((a, b) => b.score.compareTo(a.score));
+    // Sort by position-specific usage score if position provided
+    if (position != null) {
+      matches.sort((a, b) => b.getPositionScore(position).compareTo(a.getPositionScore(position)));
+    } else {
+      // Fall back to general usage score
+      matches.sort((a, b) => b.score.compareTo(a.score));
+    }
 
     return matches.take(limit).toList();
   }
@@ -156,7 +179,92 @@ class WordUsageTracker {
     trackWordUsage(wordText);
   }
 
-  /// Import word usage from text analysis
+  /// Import vocabulary from raw text with position tracking
+  /// This will parse the text into sentences and track word positions
+  Future<ImportStats> importFromText(
+    String text, {
+    int minFrequency = 1,
+  }) async {
+    int added = 0;
+    int updated = 0;
+    int skipped = 0;
+
+    // Track word usage by position
+    final Map<String, Map<int, int>> wordPositionCounts = {};
+
+    // Split into sentences by common punctuation
+    final sentences = text.split(RegExp(r'[.!?]+\s*'));
+
+    for (final sent in sentences) {
+      if (sent.trim().isEmpty) continue;
+
+      // Track individual words with position
+      final words = sent.trim().split(RegExp(r'\s+'));
+      for (int i = 0; i < words.length; i++) {
+        final cleaned = words[i].replaceAll(RegExp(r'[^\w]'), '');
+        if (cleaned.isEmpty) continue;
+
+        final key = cleaned.toLowerCase();
+
+        // Skip numerals
+        if (RegExp(r'^\d+$').hasMatch(key)) continue;
+
+        // Position: 1 = first word, 2 = second word, 3+ = other
+        final position = i == 0 ? 1 : (i == 1 ? 2 : 3);
+
+        // Track position counts
+        wordPositionCounts.putIfAbsent(key, () => {1: 0, 2: 0, 3: 0});
+        wordPositionCounts[key]![position] = (wordPositionCounts[key]![position] ?? 0) + 1;
+      }
+    }
+
+    // Apply to vocabulary
+    for (final entry in wordPositionCounts.entries) {
+      final word = entry.key;
+      final positionCounts = entry.value;
+      final totalFrequency = positionCounts.values.reduce((a, b) => a + b);
+
+      // Skip if below minimum frequency
+      if (totalFrequency < minFrequency) {
+        skipped++;
+        continue;
+      }
+
+      if (_vocabulary.containsKey(word)) {
+        // Update existing word with position data
+        final existingWord = _vocabulary[word]!;
+        existingWord.firstWordCount += positionCounts[1] ?? 0;
+        existingWord.secondWordCount += positionCounts[2] ?? 0;
+        existingWord.otherWordCount += positionCounts[3] ?? 0;
+        existingWord.usageCount += totalFrequency;
+        existingWord.lastUsed = DateTime.now();
+        updated++;
+      } else {
+        // Add new word with position data
+        _vocabulary[word] = Word(
+          text: word,
+          phonetic: _generateSimplePhonetic(word),
+          usageCount: totalFrequency,
+          firstWordCount: positionCounts[1] ?? 0,
+          secondWordCount: positionCounts[2] ?? 0,
+          otherWordCount: positionCounts[3] ?? 0,
+          lastUsed: DateTime.now(),
+        );
+        added++;
+      }
+    }
+
+    await _saveVocabulary();
+
+    return ImportStats(
+      added: added,
+      updated: updated,
+      skipped: skipped,
+      total: wordPositionCounts.length,
+    );
+  }
+
+  /// Import word usage from text analysis (frequency map only, no position data)
   /// This will add/update words in the vocabulary based on their frequency in the analyzed text
   Future<ImportStats> importFromTextAnalysis(
     Map<String, int> wordFrequencies, {
@@ -187,6 +295,9 @@ class WordUsageTracker {
             text: existingWord.text,
             phonetic: existingWord.phonetic,
             usageCount: existingWord.usageCount + frequency,
+            firstWordCount: existingWord.firstWordCount,
+            secondWordCount: existingWord.secondWordCount,
+            otherWordCount: existingWord.otherWordCount,
             lastUsed: DateTime.now(),
           );
           updated++;
@@ -233,6 +344,24 @@ class WordUsageTracker {
   List<Word> _getMostUsedWords(int limit) {
     final words = _vocabulary.values.toList();
     words.sort((a, b) => b.score.compareTo(a.score));
+    return words.take(limit).toList();
+  }
+
+  /// Get most frequently used words for a specific position
+  List<Word> _getMostUsedWordsForPosition(int limit, int? position) {
+    // Filter out numerals
+    final words = _vocabulary.values
+        .where((word) => !RegExp(r'^\d+$').hasMatch(word.text))
+        .toList();
+
+    if (position != null) {
+      // Sort by position-specific score
+      words.sort((a, b) => b.getPositionScore(position).compareTo(a.getPositionScore(position)));
+    } else {
+      // Fall back to general usage score
+      words.sort((a, b) => b.score.compareTo(a.score));
+    }
+
     return words.take(limit).toList();
   }
 

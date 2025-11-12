@@ -18,7 +18,7 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
   List<Word> _filteredWords = [];
   bool _isLoading = true;
   String _searchQuery = '';
-  String _sortBy = 'alpha_asc'; // 'alpha_asc', 'alpha_desc', 'freq_desc', 'freq_asc'
+  String _sortBy = 'alpha_asc'; // 'alpha_asc', 'alpha_desc', 'first_desc', 'first_asc', 'second_desc', 'second_asc', 'other_desc', 'other_asc', 'total_desc', 'total_asc'
 
   @override
   void initState() {
@@ -37,14 +37,23 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
 
     final words = tracker.getAllWords();
 
+    // Filter out numerals
+    final filteredWords = words.where((word) => !_isNumeral(word.text)).toList();
+
     setState(() {
       _tracker = tracker;
-      _words = words;
-      _filteredWords = words;
+      _words = filteredWords;
+      _filteredWords = filteredWords;
       _isLoading = false;
     });
 
     _sortWords();
+  }
+
+  /// Check if a word is a numeral
+  bool _isNumeral(String text) {
+    // Check if the entire word is numeric
+    return RegExp(r'^\d+$').hasMatch(text);
   }
 
   void _sortWords() {
@@ -56,10 +65,28 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
         case 'alpha_desc':
           _filteredWords.sort((a, b) => b.text.compareTo(a.text));
           break;
-        case 'freq_desc':
+        case 'first_desc':
+          _filteredWords.sort((a, b) => b.firstWordCount.compareTo(a.firstWordCount));
+          break;
+        case 'first_asc':
+          _filteredWords.sort((a, b) => a.firstWordCount.compareTo(b.firstWordCount));
+          break;
+        case 'second_desc':
+          _filteredWords.sort((a, b) => b.secondWordCount.compareTo(a.secondWordCount));
+          break;
+        case 'second_asc':
+          _filteredWords.sort((a, b) => a.secondWordCount.compareTo(b.secondWordCount));
+          break;
+        case 'other_desc':
+          _filteredWords.sort((a, b) => b.otherWordCount.compareTo(a.otherWordCount));
+          break;
+        case 'other_asc':
+          _filteredWords.sort((a, b) => a.otherWordCount.compareTo(b.otherWordCount));
+          break;
+        case 'total_desc':
           _filteredWords.sort((a, b) => b.usageCount.compareTo(a.usageCount));
           break;
-        case 'freq_asc':
+        case 'total_asc':
           _filteredWords.sort((a, b) => a.usageCount.compareTo(b.usageCount));
           break;
       }
@@ -167,12 +194,22 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
 
   void _toggleSort(String column) {
     setState(() {
-      if (column == 'word') {
-        // Toggle between alpha_asc and alpha_desc
-        _sortBy = _sortBy == 'alpha_asc' ? 'alpha_desc' : 'alpha_asc';
-      } else {
-        // Toggle between freq_desc and freq_asc
-        _sortBy = _sortBy == 'freq_desc' ? 'freq_asc' : 'freq_desc';
+      switch (column) {
+        case 'word':
+          _sortBy = _sortBy == 'alpha_asc' ? 'alpha_desc' : 'alpha_asc';
+          break;
+        case 'first':
+          _sortBy = _sortBy == 'first_desc' ? 'first_asc' : 'first_desc';
+          break;
+        case 'second':
+          _sortBy = _sortBy == 'second_desc' ? 'second_asc' : 'second_desc';
+          break;
+        case 'other':
+          _sortBy = _sortBy == 'other_desc' ? 'other_asc' : 'other_desc';
+          break;
+        case 'total':
+          _sortBy = _sortBy == 'total_desc' ? 'total_asc' : 'total_desc';
+          break;
       }
     });
     _sortWords();
@@ -220,6 +257,7 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
             child: Row(
               children: [
                 Expanded(
+                  flex: 3,
                   child: InkWell(
                     onTap: () => _toggleSort('word'),
                     child: Row(
@@ -228,36 +266,112 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
                           'Word',
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
-                            fontSize: 16,
+                            fontSize: 14,
                           ),
                         ),
                         const SizedBox(width: 4),
                         if (_sortBy == 'alpha_asc')
-                          const Icon(Icons.arrow_upward, size: 16)
+                          const Icon(Icons.arrow_upward, size: 14)
                         else if (_sortBy == 'alpha_desc')
-                          const Icon(Icons.arrow_downward, size: 16),
+                          const Icon(Icons.arrow_downward, size: 14),
                       ],
                     ),
                   ),
                 ),
                 InkWell(
-                  onTap: () => _toggleSort('count'),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        'Count',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
+                  onTap: () => _toggleSort('first'),
+                  child: SizedBox(
+                    width: 40,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Text(
+                          '1st',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 4),
-                      if (_sortBy == 'freq_desc')
-                        const Icon(Icons.arrow_downward, size: 16)
-                      else if (_sortBy == 'freq_asc')
-                        const Icon(Icons.arrow_upward, size: 16),
-                    ],
+                        if (_sortBy == 'first_desc')
+                          const Icon(Icons.arrow_downward, size: 10)
+                        else if (_sortBy == 'first_asc')
+                          const Icon(Icons.arrow_upward, size: 10),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                InkWell(
+                  onTap: () => _toggleSort('second'),
+                  child: SizedBox(
+                    width: 40,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Text(
+                          '2nd',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                        if (_sortBy == 'second_desc')
+                          const Icon(Icons.arrow_downward, size: 10)
+                        else if (_sortBy == 'second_asc')
+                          const Icon(Icons.arrow_upward, size: 10),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                InkWell(
+                  onTap: () => _toggleSort('other'),
+                  child: SizedBox(
+                    width: 40,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Text(
+                          '3+',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                        if (_sortBy == 'other_desc')
+                          const Icon(Icons.arrow_downward, size: 10)
+                        else if (_sortBy == 'other_asc')
+                          const Icon(Icons.arrow_upward, size: 10),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                InkWell(
+                  onTap: () => _toggleSort('total'),
+                  child: SizedBox(
+                    width: 50,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        const Text(
+                          'Total',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(width: 2),
+                        if (_sortBy == 'total_desc')
+                          const Icon(Icons.arrow_downward, size: 12)
+                        else if (_sortBy == 'total_asc')
+                          const Icon(Icons.arrow_upward, size: 12),
+                      ],
+                    ),
                   ),
                 ),
                 const SizedBox(width: 48), // Space for delete button
@@ -325,24 +439,73 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
                         itemCount: _filteredWords.length,
                         itemBuilder: (context, index) {
                           final word = _filteredWords[index];
-                          return ListTile(
-                            title: Text(
-                              word.text,
-                              style: const TextStyle(fontSize: 18),
+                          return Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                            decoration: BoxDecoration(
+                              border: Border(
+                                bottom: BorderSide(color: Colors.grey[200]!),
+                              ),
                             ),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
+                            child: Row(
                               children: [
-                                Text(
-                                  '${word.usageCount}x',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey[600],
+                                Expanded(
+                                  flex: 3,
+                                  child: Text(
+                                    word.text,
+                                    style: const TextStyle(fontSize: 16),
                                   ),
                                 ),
-                                const SizedBox(width: 8),
+                                SizedBox(
+                                  width: 40,
+                                  child: Text(
+                                    '${word.firstWordCount}',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey[700],
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                SizedBox(
+                                  width: 40,
+                                  child: Text(
+                                    '${word.secondWordCount}',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey[700],
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                SizedBox(
+                                  width: 40,
+                                  child: Text(
+                                    '${word.otherWordCount}',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey[700],
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                SizedBox(
+                                  width: 50,
+                                  child: Text(
+                                    '${word.usageCount}',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.grey[800],
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                    textAlign: TextAlign.right,
+                                  ),
+                                ),
                                 IconButton(
-                                  icon: const Icon(Icons.delete, color: Colors.red),
+                                  icon: const Icon(Icons.delete, size: 20),
+                                  color: Colors.red[400],
                                   onPressed: () => _deleteWord(word),
                                 ),
                               ],
