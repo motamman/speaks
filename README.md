@@ -2,7 +2,7 @@
 
 AAC (Augmentative and Alternative Communication) app built with Flutter. Designed for individuals with speech difficulties, particularly ALS patients with motor impairments.
 
-**Version:** 0.2.0+2
+**Version:** 0.2.0+4
 **Platforms:** iOS 12.0+ / Android 5.0+
 
 ---
