@@ -45,6 +45,8 @@ class _TTSScreenState extends State<TTSScreen> {
   TTSProviderManager? _providerManager;
   UserProfileService? _profileService;
   List<Word> _currentSuggestions = [];
+  int _currentPosition = 1; // Track current word position for color coding
+  String? _currentPreviousWord; // Track previous word for bigram detection
   List<SpeechHistoryItem> _speechHistory = [];
   bool _isLoading = true;
   bool _isSpeaking = false;
@@ -150,13 +152,16 @@ class _TTSScreenState extends State<TTSScreen> {
     // Detect word position in current sentence
     final position = _detectWordPosition(text, cursorPos);
 
-    // For position 2, extract the first word for context-aware suggestions
+    // For all positions except 1, extract the previous word for context-aware suggestions
     String? previousWord;
-    if (position == 2) {
-      previousWord = _extractFirstWord(text, cursorPos);
+    if (position > 1) {
+      previousWord = _extractPreviousWord(text, cursorPos);
     }
 
     setState(() {
+      _currentPosition = position;
+      _currentPreviousWord = previousWord;
+
       if (currentWord.isEmpty) {
         // No current word - show position-based suggestions
         _currentSuggestions = tracker.getSuggestions(
@@ -229,9 +234,9 @@ class _TTSScreenState extends State<TTSScreen> {
     }
   }
 
-  /// Extract the first word from the current sentence
-  /// Returns null if no first word can be found
-  String? _extractFirstWord(String text, int cursorPos) {
+  /// Extract the previous word from the current sentence (word immediately before cursor)
+  /// Returns null if no previous word can be found
+  String? _extractPreviousWord(String text, int cursorPos) {
     if (text.isEmpty || cursorPos == 0) {
       return null;
     }
@@ -255,14 +260,54 @@ class _TTSScreenState extends State<TTSScreen> {
       return null;
     }
 
-    // Get first word (clean it from punctuation)
-    final words = currentSentence.split(RegExp(r'\s+'));
+    // Get all words (clean them from punctuation)
+    final words = currentSentence.split(RegExp(r'\s+'))
+        .map((w) => w.replaceAll(RegExp(r'[^\w]'), ''))
+        .where((w) => w.isNotEmpty)
+        .toList();
+
     if (words.isEmpty) {
       return null;
     }
 
-    final firstWord = words.first.replaceAll(RegExp(r'[^\w]'), '');
-    return firstWord.isEmpty ? null : firstWord;
+    // Return the last complete word (previous word before current typing)
+    // If currently typing a word, return the word before it
+    // If just finished a word (ends with space), return that last word
+    if (words.length >= 2 && !beforeCursor.substring(sentenceStartPos).endsWith(' ')) {
+      // Currently typing, return second-to-last word
+      return words[words.length - 2];
+    } else if (words.isNotEmpty && beforeCursor.substring(sentenceStartPos).endsWith(' ')) {
+      // Just finished a word, return the last complete word
+      return words.last;
+    } else if (words.length == 1) {
+      // Only one word so far
+      return words.first;
+    }
+
+    return null;
+  }
+
+  /// Get subtle background color for word button based on match type
+  Color _getWordButtonColor(Word word) {
+    // Check for bigram match (context-aware) - all positions except 1
+    if (_currentPosition > 1 && _currentPreviousWord != null) {
+      final bigramCount = word.getFollowCount(_currentPreviousWord!);
+      if (bigramCount > 0) {
+        return const Color(0xFFE3F2FD); // Light blue - bigram match
+      }
+    }
+
+    // Check position-specific matches
+    if (_currentPosition == 1 && word.firstWordCount > 0) {
+      return const Color(0xFFFFF3E0); // Light amber - 1st word match
+    } else if (_currentPosition == 2 && word.secondWordCount > 0) {
+      return const Color(0xFFE8F5E9); // Light green - 2nd word match
+    } else if (_currentPosition == 3 && word.otherWordCount > 0) {
+      return const Color(0xFFF3E5F5); // Light purple - 3rd+ word match
+    }
+
+    // Default - general match (no position-specific data)
+    return Colors.white;
   }
 
   void _onWordSelected(Word word) {
@@ -277,10 +322,10 @@ class _TTSScreenState extends State<TTSScreen> {
     // Detect position before inserting the word
     final position = _detectWordPosition(text, cursorPos);
 
-    // Extract previousWord for bigram tracking (position 2)
+    // Extract previousWord for bigram tracking (all positions except 1)
     String? previousWord;
-    if (position == 2) {
-      previousWord = _extractFirstWord(text, cursorPos);
+    if (position > 1) {
+      previousWord = _extractPreviousWord(text, cursorPos);
     }
 
     if (cursorPos == 0 || text.isEmpty) {
@@ -1175,7 +1220,7 @@ class _TTSScreenState extends State<TTSScreen> {
                               left: index == 0 ? 0 : 0,
                             ),
                             child: Material(
-                              color: Colors.white,
+                              color: _getWordButtonColor(word),
                               borderRadius: BorderRadius.circular(8),
                               elevation: 2,
                               child: InkWell(
@@ -1312,8 +1357,8 @@ class _TTSScreenState extends State<TTSScreen> {
                   _textController.selection.baseOffset,
                 );
                 String? previousWord;
-                if (position == 2) {
-                  previousWord = _extractFirstWord(
+                if (position > 1) {
+                  previousWord = _extractPreviousWord(
                     _textController.text,
                     _textController.selection.baseOffset,
                   );
@@ -1335,6 +1380,8 @@ class _TTSScreenState extends State<TTSScreen> {
             onWheelShown: () {},
             onWheelHidden: () {},
             alwaysVisible: true,
+            currentPosition: _currentPosition,
+            previousWord: _currentPreviousWord,
           ),
         );
       },

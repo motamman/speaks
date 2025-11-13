@@ -36,9 +36,11 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
     await tracker.initialize();
 
     final words = tracker.getAllWords();
+    print('DEBUG VocabScreen: Loaded ${words.length} words');
 
     // Filter out numerals
     final filteredWords = words.where((word) => !_isNumeral(word.text)).toList();
+    print('DEBUG VocabScreen: After filtering: ${filteredWords.length} words');
 
     setState(() {
       _tracker = tracker;

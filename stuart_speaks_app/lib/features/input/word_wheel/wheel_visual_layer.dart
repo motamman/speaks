@@ -12,12 +12,16 @@ class WheelVisualLayer extends StatelessWidget {
   final WordWheelController controller;
   final Size wheelSize;
   final bool alwaysVisible;
+  final int currentPosition;
+  final String? previousWord;
 
   const WheelVisualLayer({
     super.key,
     required this.controller,
     required this.wheelSize,
     this.alwaysVisible = false,
+    this.currentPosition = 1,
+    this.previousWord,
   });
 
   @override
@@ -52,6 +56,8 @@ class WheelVisualLayer extends StatelessWidget {
                 outerRingDistance: outerRingDistance,
                 innerRingDistanceY: innerRingDistanceY,
                 outerRingDistanceY: outerRingDistanceY,
+                currentPosition: currentPosition,
+                previousWord: previousWord,
               ),
               size: wheelSize,
             ),
@@ -74,6 +80,8 @@ class WheelPainterV2 extends CustomPainter {
   final double outerRingDistance;
   final double innerRingDistanceY;
   final double outerRingDistanceY;
+  final int currentPosition;
+  final String? previousWord;
 
   const WheelPainterV2({
     required this.words,
@@ -87,6 +95,8 @@ class WheelPainterV2 extends CustomPainter {
     required this.outerRingDistance,
     required this.innerRingDistanceY,
     required this.outerRingDistanceY,
+    this.currentPosition = 1,
+    this.previousWord,
   });
 
   @override
@@ -286,14 +296,16 @@ class WheelPainterV2 extends CustomPainter {
         ..strokeWidth = isHovered ? 3 : 1.5,
     );
 
-    // Draw button background
+    // Draw button background with color based on match type
+    final backgroundColor = isHovered
+        ? Colors.blue.withValues(alpha: 0.9)
+        : _getWordButtonColor(word).withValues(alpha: 0.95);
+
     canvas.drawCircle(
       position.offset,
       buttonRadius,
       Paint()
-        ..color = isHovered
-            ? Colors.blue.withValues(alpha: 0.9)
-            : Colors.white.withValues(alpha: 0.95)
+        ..color = backgroundColor
         ..style = PaintingStyle.fill,
     );
 
@@ -428,6 +440,29 @@ class WheelPainterV2 extends CustomPainter {
     );
   }
 
+  /// Get subtle background color for word button based on match type
+  Color _getWordButtonColor(Word word) {
+    // Check for bigram match (context-aware) - all positions except 1
+    if (currentPosition > 1 && previousWord != null) {
+      final bigramCount = word.getFollowCount(previousWord!);
+      if (bigramCount > 0) {
+        return const Color(0xFFE3F2FD); // Light blue - bigram match
+      }
+    }
+
+    // Check position-specific matches
+    if (currentPosition == 1 && word.firstWordCount > 0) {
+      return const Color(0xFFFFF3E0); // Light amber - 1st word match
+    } else if (currentPosition == 2 && word.secondWordCount > 0) {
+      return const Color(0xFFE8F5E9); // Light green - 2nd word match
+    } else if (currentPosition == 3 && word.otherWordCount > 0) {
+      return const Color(0xFFF3E5F5); // Light purple - 3rd+ word match
+    }
+
+    // Default - general match (no position-specific data)
+    return Colors.white;
+  }
+
   @override
   bool shouldRepaint(WheelPainterV2 oldDelegate) {
     // Only repaint when something actually changed
@@ -435,6 +470,8 @@ class WheelPainterV2 extends CustomPainter {
         oldDelegate.hoveredWord != hoveredWord ||
         oldDelegate.dragPosition != dragPosition ||
         oldDelegate.isHolding != isHolding ||
-        oldDelegate.words.length != words.length;
+        oldDelegate.words.length != words.length ||
+        oldDelegate.currentPosition != currentPosition ||
+        oldDelegate.previousWord != previousWord;
   }
 }

@@ -16,6 +16,8 @@ class WordWheelWidgetV2 extends StatefulWidget {
   final VoidCallback? onActivated;
   final Function(Offset)? onActivatedWithPosition;
   final bool alwaysVisible;
+  final int currentPosition;
+  final String? previousWord;
 
   const WordWheelWidgetV2({
     super.key,
@@ -26,6 +28,8 @@ class WordWheelWidgetV2 extends StatefulWidget {
     this.onActivated,
     this.onActivatedWithPosition,
     this.alwaysVisible = false,
+    this.currentPosition = 1,
+    this.previousWord,
   });
 
   @override
@@ -218,6 +222,8 @@ class _WordWheelWidgetV2State extends State<WordWheelWidgetV2> {
                   controller: controller,
                   wheelSize: effectiveSize,
                   alwaysVisible: widget.alwaysVisible,
+                  currentPosition: widget.currentPosition,
+                  previousWord: widget.previousWord,
                 ),
               ),
             ],

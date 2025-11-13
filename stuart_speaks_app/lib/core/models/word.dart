@@ -49,13 +49,14 @@ class Word {
         firstWordCount++;
       } else if (position == 2) {
         secondWordCount++;
-        // Track bigram: this word follows previousWord
-        if (previousWord != null) {
-          final key = previousWord.toLowerCase();
-          followsWords[key] = (followsWords[key] ?? 0) + 1;
-        }
       } else {
         otherWordCount++;
+      }
+
+      // Track bigram: this word follows previousWord (all positions except 1)
+      if (position > 1 && previousWord != null) {
+        final key = previousWord.toLowerCase();
+        followsWords[key] = (followsWords[key] ?? 0) + 1;
       }
     }
   }
@@ -66,25 +67,25 @@ class Word {
   }
 
   /// Get position-specific score for ranking suggestions
-  /// For position 2, can provide previousWord for context-aware bigram scoring
+  /// For all positions except 1, can provide previousWord for context-aware bigram scoring
   double getPositionScore(int position, {String? previousWord}) {
     double positionCount;
+
+    // For all positions except 1, check bigram statistics first
+    if (position > 1 && previousWord != null) {
+      final bigramCount = getFollowCount(previousWord);
+      if (bigramCount > 0) {
+        // Use bigram count with high weight (prioritize context-specific usage)
+        positionCount = bigramCount.toDouble() * 2.0;
+        return positionCount * _recencyMultiplier();
+      }
+    }
+
+    // Fall back to position-specific counts
     if (position == 1) {
       positionCount = firstWordCount.toDouble();
     } else if (position == 2) {
-      // For second word, prefer bigram statistics if available
-      if (previousWord != null) {
-        final bigramCount = getFollowCount(previousWord);
-        if (bigramCount > 0) {
-          // Use bigram count with high weight (prioritize context-specific usage)
-          positionCount = bigramCount.toDouble() * 2.0;
-        } else {
-          // Fall back to general second-word usage
-          positionCount = secondWordCount.toDouble();
-        }
-      } else {
-        positionCount = secondWordCount.toDouble();
-      }
+      positionCount = secondWordCount.toDouble();
     } else {
       positionCount = otherWordCount.toDouble();
     }

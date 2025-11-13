@@ -67,11 +67,11 @@ class WordUsageTracker {
           // Position: 1 = first word, 2 = second word, 3+ = other
           final position = i == 0 ? 1 : (i == 1 ? 2 : 3);
 
-          // Track bigram: pass previous word when tracking position 2
+          // Track bigram: pass previous word for all positions except 1
           trackWordUsage(
             cleaned,
             position: position,
-            previousWord: (position == 2) ? previousWord : null,
+            previousWord: (position > 1) ? previousWord : null,
           );
 
           // Update previousWord for next iteration
@@ -95,7 +95,7 @@ class WordUsageTracker {
 
   /// Get word suggestions for a given input with position awareness
   /// Position: 1 = first word, 2 = second word, 3+ = other positions
-  /// For position 2, can provide previousWord for context-aware bigram suggestions
+  /// For all positions except 1, can provide previousWord for context-aware bigram suggestions
   List<Word> getSuggestions(
     String input, {
     int limit = 12,
@@ -112,11 +112,20 @@ class WordUsageTracker {
         .where((word) => word.matches(input) && !RegExp(r'^\d+$').hasMatch(word.text))
         .toList();
 
-    // Sort by position-specific usage score if position provided
+    // Sort by match type priority, then by score within each type
     if (position != null) {
-      matches.sort((a, b) => b
-          .getPositionScore(position, previousWord: previousWord)
-          .compareTo(a.getPositionScore(position, previousWord: previousWord)));
+      matches.sort((a, b) {
+        final aPriority = _getMatchPriority(a, position, previousWord);
+        final bPriority = _getMatchPriority(b, position, previousWord);
+
+        if (aPriority != bPriority) {
+          return aPriority.compareTo(bPriority); // Lower priority number = higher priority
+        }
+
+        // Same priority, sort by score
+        return b.getPositionScore(position, previousWord: previousWord)
+            .compareTo(a.getPositionScore(position, previousWord: previousWord));
+      });
     } else {
       // Fall back to general usage score
       matches.sort((a, b) => b.score.compareTo(a.score));
@@ -240,8 +249,8 @@ class WordUsageTracker {
         wordPositionCounts.putIfAbsent(key, () => {1: 0, 2: 0, 3: 0});
         wordPositionCounts[key]![position] = (wordPositionCounts[key]![position] ?? 0) + 1;
 
-        // Track bigram for second word
-        if (position == 2 && previousWord != null) {
+        // Track bigram for all positions except first word
+        if (position > 1 && previousWord != null) {
           bigramCounts.putIfAbsent(key, () => {});
           bigramCounts[key]![previousWord] = (bigramCounts[key]![previousWord] ?? 0) + 1;
         }
@@ -392,6 +401,30 @@ class WordUsageTracker {
     return words.take(limit).toList();
   }
 
+  /// Get match priority for sorting (lower = higher priority)
+  /// Priority order: 1=bigram, 2=position match, 3=all other
+  int _getMatchPriority(Word word, int position, String? previousWord) {
+    // Check for bigram match (highest priority) - all positions except 1
+    if (position > 1 && previousWord != null) {
+      final bigramCount = word.getFollowCount(previousWord);
+      if (bigramCount > 0) {
+        return 1; // Bigram match - highest priority
+      }
+    }
+
+    // Check for position-specific match (medium priority)
+    if (position == 1 && word.firstWordCount > 0) {
+      return 2;
+    } else if (position == 2 && word.secondWordCount > 0) {
+      return 2;
+    } else if (position == 3 && word.otherWordCount > 0) {
+      return 2;
+    }
+
+    // No specific match (lowest priority)
+    return 3;
+  }
+
   /// Get most frequently used words for a specific position
   List<Word> _getMostUsedWordsForPosition(
     int limit,
@@ -404,10 +437,19 @@ class WordUsageTracker {
         .toList();
 
     if (position != null) {
-      // Sort by position-specific score (with context if provided)
-      words.sort((a, b) => b
-          .getPositionScore(position, previousWord: previousWord)
-          .compareTo(a.getPositionScore(position, previousWord: previousWord)));
+      // Sort by match type priority, then by score within each type
+      words.sort((a, b) {
+        final aPriority = _getMatchPriority(a, position, previousWord);
+        final bPriority = _getMatchPriority(b, position, previousWord);
+
+        if (aPriority != bPriority) {
+          return aPriority.compareTo(bPriority); // Lower priority number = higher priority
+        }
+
+        // Same priority, sort by score
+        return b.getPositionScore(position, previousWord: previousWord)
+            .compareTo(a.getPositionScore(position, previousWord: previousWord));
+      });
     } else {
       // Fall back to general usage score
       words.sort((a, b) => b.score.compareTo(a.score));
@@ -464,6 +506,7 @@ class WordUsageTracker {
 
   /// Load core AAC vocabulary (high-frequency words)
   Future<void> _loadCoreVocabulary() async {
+    print('DEBUG _loadCoreVocabulary: Starting');
     final coreWords = [
       // Pronouns
       ('I', 100),
@@ -532,7 +575,9 @@ class WordUsageTracker {
       );
     }
 
+    print('DEBUG _loadCoreVocabulary: Added ${_vocabulary.length} core words');
     await _saveVocabulary();
+    print('DEBUG _loadCoreVocabulary: Saved to prefs');
   }
 
   String _generateSimplePhonetic(String word) {
