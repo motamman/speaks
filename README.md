@@ -342,7 +342,7 @@ MIT License
 
 Built for Stuart and the AAC community. Powered by Fish.Audio, ElevenLabs, Cartesia, Play.ht, and Resemble.AI.
 
-**Contact:** maurice@znnora.sv
+**Contact:** maurice@zennora.sv
 
 ---
 
