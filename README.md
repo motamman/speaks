@@ -1,9 +1,15 @@
-# Speaks
+# <img src="stuart_speaks_app/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-1024x1024@1x.png" width="48" height="48" style="vertical-align: middle;"> Speaks
 
 AAC (Augmentative and Alternative Communication) app built with Flutter. Designed for individuals with speech difficulties, particularly ALS patients with motor impairments.
 
 **Version:** 0.2.0+2
 **Platforms:** iOS 12.0+ / Android 5.0+
+
+---
+
+## About This App
+
+**This app was built to help my dear friend Stuart communicate with his old voice after being diagnosed with ALS.** I used Fish.Audio and Cartesia AI to create models of his voice. You will need to have recordings of the person's voice you want to emulate. You don't need much. Create an account with Fish and/or Cartesia and follow their instructions. Once the model is created, you will need to plug in your API Key and Model ID into the config.
 
 ---
 
