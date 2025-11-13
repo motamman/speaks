@@ -783,14 +783,29 @@ class _TTSScreenState extends State<TTSScreen> {
     try {
       // Write audio to temporary file
       final tempDir = Directory.systemTemp;
-      final extension = item.mimeType == 'audio/mpeg' ? 'mp3' : 'wav';
+      final mimeType = item.mimeType ?? 'audio/mpeg';
+      // Map MIME type to file extension
+      String extension;
+      switch (mimeType) {
+        case 'audio/mpeg':
+          extension = 'mp3';
+          break;
+        case 'audio/wav':
+          extension = 'wav';
+          break;
+        case 'audio/pcm':
+          extension = 'wav'; // PCM saved as WAV for compatibility
+          break;
+        default:
+          extension = 'mp3';
+      }
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final fileName = 'speaks_audio_$timestamp.$extension';
       final tempFile = File('${tempDir.path}/$fileName');
       await tempFile.writeAsBytes(item.cachedAudio!);
 
       // Share the file
-      final xFile = XFile(tempFile.path);
+      final xFile = XFile(tempFile.path, mimeType: mimeType);
       final box = context.findRenderObject() as RenderBox?;
       final sharePositionOrigin = box != null
           ? box.localToGlobal(Offset.zero) & box.size

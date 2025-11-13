@@ -435,7 +435,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await tempFile.writeAsString(jsonContent);
 
       // Share the file
-      final xFile = XFile(tempFile.path);
+      final xFile = XFile(tempFile.path, mimeType: 'application/json');
 
       // Get screen size for iPad popover positioning
       final box = context.findRenderObject() as RenderBox?;

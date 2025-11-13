@@ -404,16 +404,33 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
     }
 
     try {
+      // Get the MIME type from cache
+      final mimeType = _audioCacheMimeTypes[phrase.text] ?? 'audio/mpeg';
+
       // Write audio to temporary file
       final tempDir = Directory.systemTemp;
-      final extension = 'mp3'; // Default to mp3 for phrases
+      // Map MIME type to file extension
+      String extension;
+      switch (mimeType) {
+        case 'audio/mpeg':
+          extension = 'mp3';
+          break;
+        case 'audio/wav':
+          extension = 'wav';
+          break;
+        case 'audio/pcm':
+          extension = 'wav'; // PCM saved as WAV for compatibility
+          break;
+        default:
+          extension = 'mp3';
+      }
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final fileName = 'speaks_phrase_$timestamp.$extension';
       final tempFile = File('${tempDir.path}/$fileName');
       await tempFile.writeAsBytes(cachedAudio);
 
       // Share the file
-      final xFile = XFile(tempFile.path);
+      final xFile = XFile(tempFile.path, mimeType: mimeType);
       final box = context.findRenderObject() as RenderBox?;
       final sharePositionOrigin = box != null
           ? box.localToGlobal(Offset.zero) & box.size
