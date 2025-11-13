@@ -2,7 +2,7 @@
 
 A Flutter AAC (Augmentative and Alternative Communication) app with multi-provider TTS support and intelligent word prediction.
 
-**Version:** 0.3.0+3
+**Version:** 0.3.0+4
 **Platform:** iOS 12.0+ / Android 5.0+
 
 ## About This App
