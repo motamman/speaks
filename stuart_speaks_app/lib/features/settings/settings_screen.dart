@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart' show Share, XFile, ShareResultStatus
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../core/services/tts_provider_manager.dart';
 import '../../core/providers/tts_provider.dart';
@@ -38,6 +39,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String? _selectedProviderId;
   TTSProvider? _selectedProvider;
   Timer? _autoSaveTimer;
+  String _version = '';
+  String _buildNumber = '';
 
   @override
   void initState() {
@@ -49,6 +52,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {
       _isLoading = true;
     });
+
+    // Load package info
+    final packageInfo = await PackageInfo.fromPlatform();
+    _version = packageInfo.version;
+    _buildNumber = packageInfo.buildNumber;
 
     try {
       // Try to load the active provider first
@@ -856,9 +864,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 16),
 
           // Version and Build
-          _buildInfoRow('Version', '0.3.1'),
+          _buildInfoRow('Version', _version),
           const SizedBox(height: 8),
-          _buildInfoRow('Build', '6'),
+          _buildInfoRow('Build', _buildNumber),
           const SizedBox(height: 16),
 
           const Divider(),
