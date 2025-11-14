@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:share_plus/share_plus.dart' show Share, XFile;
+import 'package:path_provider/path_provider.dart';
 
 import '../../core/models/phrase.dart';
 import '../../core/models/tts_request.dart';
@@ -404,33 +405,35 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
     }
 
     try {
-      // Get the MIME type from cache
+      // Get the MIME type and sample rate from cache
       final mimeType = _audioCacheMimeTypes[phrase.text] ?? 'audio/mpeg';
+      final sampleRate = _audioCacheSampleRates[phrase.text];
 
-      // Write audio to temporary file
-      final tempDir = Directory.systemTemp;
-      // Map MIME type to file extension
+      // Convert PCM to WAV if needed
+      Uint8List shareableData = cachedAudio;
+      String shareMimeType = mimeType;
       String extension;
-      switch (mimeType) {
-        case 'audio/mpeg':
-          extension = 'mp3';
-          break;
-        case 'audio/wav':
-          extension = 'wav';
-          break;
-        case 'audio/pcm':
-          extension = 'wav'; // PCM saved as WAV for compatibility
-          break;
-        default:
-          extension = 'mp3';
+
+      if (mimeType == 'audio/pcm') {
+        // Convert raw PCM to WAV format with proper headers
+        shareableData = _convertPcmToWav(cachedAudio, sampleRate: sampleRate ?? 44100);
+        shareMimeType = 'audio/wav';
+        extension = 'wav';
+      } else if (mimeType == 'audio/wav') {
+        extension = 'wav';
+      } else {
+        extension = 'mp3'; // audio/mpeg or default
       }
+
+      // Write audio to temporary file (using path_provider for iOS share compatibility)
+      final tempDir = await getTemporaryDirectory();
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final fileName = 'speaks_phrase_$timestamp.$extension';
       final tempFile = File('${tempDir.path}/$fileName');
-      await tempFile.writeAsBytes(cachedAudio);
+      await tempFile.writeAsBytes(shareableData);
 
       // Share the file
-      final xFile = XFile(tempFile.path, mimeType: mimeType);
+      final xFile = XFile(tempFile.path, mimeType: shareMimeType);
       final box = context.findRenderObject() as RenderBox?;
       final sharePositionOrigin = box != null
           ? box.localToGlobal(Offset.zero) & box.size
@@ -891,5 +894,50 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
         );
       }
     }
+  }
+
+  /// Convert raw PCM data to WAV format with proper headers
+  Uint8List _convertPcmToWav(Uint8List pcmData, {int sampleRate = 44100, int channels = 1, int bitsPerSample = 16}) {
+    final dataSize = pcmData.length;
+    final fileSize = 36 + dataSize;
+
+    final header = ByteData(44);
+
+    // RIFF header
+    header.setUint8(0, 0x52); // R
+    header.setUint8(1, 0x49); // I
+    header.setUint8(2, 0x46); // F
+    header.setUint8(3, 0x46); // F
+    header.setUint32(4, fileSize, Endian.little);
+    header.setUint8(8, 0x57); // W
+    header.setUint8(9, 0x41); // A
+    header.setUint8(10, 0x56); // V
+    header.setUint8(11, 0x45); // E
+
+    // fmt chunk
+    header.setUint8(12, 0x66); // f
+    header.setUint8(13, 0x6D); // m
+    header.setUint8(14, 0x74); // t
+    header.setUint8(15, 0x20); // space
+    header.setUint32(16, 16, Endian.little);
+    header.setUint16(20, 1, Endian.little); // PCM
+    header.setUint16(22, channels, Endian.little);
+    header.setUint32(24, sampleRate, Endian.little);
+    header.setUint32(28, sampleRate * channels * (bitsPerSample ~/ 8), Endian.little);
+    header.setUint16(32, channels * (bitsPerSample ~/ 8), Endian.little);
+    header.setUint16(34, bitsPerSample, Endian.little);
+
+    // data chunk
+    header.setUint8(36, 0x64); // d
+    header.setUint8(37, 0x61); // a
+    header.setUint8(38, 0x74); // t
+    header.setUint8(39, 0x61); // a
+    header.setUint32(40, dataSize, Endian.little);
+
+    final wavData = Uint8List(44 + dataSize);
+    wavData.setRange(0, 44, header.buffer.asUint8List());
+    wavData.setRange(44, 44 + dataSize, pcmData);
+
+    return wavData;
   }
 }
