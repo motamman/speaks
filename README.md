@@ -83,7 +83,6 @@ Speaks provides AI-powered text-to-speech with intelligent word prediction and a
 
 **Core Vocabulary:**
 - Pre-loaded with 50+ high-frequency AAC words
-- Categories: pronouns, verbs, nouns, social, descriptors
 
 ### Settings
 
