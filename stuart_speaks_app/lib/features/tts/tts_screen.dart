@@ -312,6 +312,9 @@ class _TTSScreenState extends State<TTSScreen> {
   }
 
   void _onWordSelected(Word word) {
+    // Dismiss keyboard when selecting a word
+    FocusScope.of(context).unfocus();
+
     final text = _textController.text;
     var cursorPos = _textController.selection.baseOffset;
 

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../core/services/user_profile_service.dart';
 import '../../core/services/tts_provider_manager.dart';
@@ -26,6 +28,8 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
   final TextEditingController _lastNameController = TextEditingController();
   UserProfileService? _profileService;
   bool _isLoading = true;
+  String _version = '';
+  String _buildNumber = '';
 
   @override
   void initState() {
@@ -36,6 +40,11 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
   Future<void> _initialize() async {
     final prefs = await SharedPreferences.getInstance();
     _profileService = UserProfileService(prefs);
+
+    // Load package info
+    final packageInfo = await PackageInfo.fromPlatform();
+    _version = packageInfo.version;
+    _buildNumber = packageInfo.buildNumber;
 
     setState(() {
       _firstNameController.text = _profileService!.getFirstName();
@@ -200,11 +209,160 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
                   ],
                 ),
               ),
+
+              const SizedBox(height: 24),
+
+              // About Section
+              _buildSection(
+                title: 'About Speaks',
+                icon: Icons.info_outline,
+                child: _buildAboutContent(),
+              ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  Widget _buildAboutContent() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Version and Build
+          _buildInfoRow('Version', _version),
+          const SizedBox(height: 8),
+          _buildInfoRow('Build', _buildNumber),
+          const SizedBox(height: 16),
+
+          const Divider(),
+          const SizedBox(height: 16),
+
+          // Links section
+          Text(
+            'Resources',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey[800],
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          _buildLinkRow(
+            icon: Icons.code,
+            label: 'GitHub Repository',
+            url: 'https://github.com/mtamsett/stuart-speaks',
+          ),
+          const SizedBox(height: 8),
+          _buildLinkRow(
+            icon: Icons.bug_report,
+            label: 'Report Issues',
+            url: 'https://github.com/mtamsett/stuart-speaks/issues',
+          ),
+          const SizedBox(height: 8),
+          _buildLinkRow(
+            icon: Icons.description,
+            label: 'Documentation',
+            url: 'https://github.com/mtamsett/stuart-speaks/blob/main/README.md',
+          ),
+          const SizedBox(height: 16),
+
+          const Divider(),
+          const SizedBox(height: 16),
+
+          // Contact
+          Text(
+            'Contact',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey[800],
+            ),
+          ),
+          const SizedBox(height: 12),
+          _buildLinkRow(
+            icon: Icons.email,
+            label: 'maurice@zennora.sv',
+            url: 'mailto:maurice@zennora.sv',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoRow(String label, String value) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 14,
+            color: Colors.grey[700],
+          ),
+        ),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLinkRow({
+    required IconData icon,
+    required String label,
+    required String url,
+  }) {
+    return InkWell(
+      onTap: () => _launchUrl(url),
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: Colors.blue[600]),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.blue[600],
+                  decoration: TextDecoration.underline,
+                ),
+              ),
+            ),
+            Icon(Icons.open_in_new, size: 16, color: Colors.grey[600]),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _launchUrl(String urlString) async {
+    final uri = Uri.parse(urlString);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not open $urlString'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildSection({
