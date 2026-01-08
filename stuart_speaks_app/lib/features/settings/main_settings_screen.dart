@@ -1,7 +1,12 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+
+import '../../core/models/phrase.dart';
 
 import '../../core/services/user_profile_service.dart';
 import '../../core/services/tts_provider_manager.dart';
@@ -10,6 +15,7 @@ import '../../core/services/auth_service.dart';
 import '../../core/services/sync_service.dart';
 import '../../core/services/api_client.dart';
 import '../../core/services/config_sync_service.dart';
+import '../../core/services/vocabulary_sync_service.dart';
 import '../../core/config/server_config.dart';
 import '../../core/widgets/sync_status_indicator.dart';
 import '../../core/constants/accessibility_constants.dart';
@@ -49,6 +55,7 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
   AuthService? _authService;
   SyncService? _syncService;
   ConfigSyncService? _configSyncService;
+  VocabularySyncService? _vocabularySyncService;
   SyncStatus _syncStatus = SyncStatus.idle;
   bool _isSyncing = false;
 
@@ -84,6 +91,12 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
       apiClient: _apiClient!,
       authService: _authService!,
       providerManager: widget.providerManager,
+    );
+
+    _vocabularySyncService = VocabularySyncService(
+      apiClient: _apiClient!,
+      authService: _authService!,
+      prefs: prefs,
     );
 
     // Check auth status if server is configured
@@ -963,6 +976,12 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
     // Sync config after login (download from server)
     await _configSyncService?.syncConfig();
 
+    // Sync vocabulary after login
+    await _vocabularySyncService?.syncVocabulary();
+
+    // Sync phrases after login
+    await _syncPhrases();
+
     // Reload provider configuration
     await widget.providerManager.loadSavedConfiguration();
 
@@ -971,7 +990,7 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Signed in successfully! Your settings have been synced.'),
+          content: Text('Signed in! Settings, vocabulary, and phrases synced.'),
           backgroundColor: Colors.green,
         ),
       );
@@ -980,6 +999,7 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
 
   Future<void> _performSync() async {
     if (_isSyncing) return;
+    print('DEBUG _performSync: starting sync');
 
     setState(() {
       _isSyncing = true;
@@ -988,9 +1008,18 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
 
     try {
       // Sync config (API keys, etc.)
+      print('DEBUG _performSync: syncing config...');
       await _configSyncService?.uploadConfig();
 
-      // TODO: Sync phrases when integrated with phrases screen
+      // Sync vocabulary
+      print('DEBUG _performSync: syncing vocabulary...');
+      final vocabResult = await _vocabularySyncService?.syncVocabulary();
+      print('DEBUG _performSync: vocabulary result: ${vocabResult?.success}, added: ${vocabResult?.wordsAdded}, merged: ${vocabResult?.wordsMerged}');
+
+      // Sync phrases
+      print('DEBUG _performSync: syncing phrases...');
+      await _syncPhrases();
+      print('DEBUG _performSync: phrases synced');
 
       setState(() {
         _syncStatus = SyncStatus.success;
@@ -1021,6 +1050,54 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
       setState(() {
         _isSyncing = false;
       });
+    }
+  }
+
+  Future<void> _syncPhrases() async {
+    print('DEBUG _syncPhrases: canSync=${_syncService?.canSync}');
+    if (_syncService == null || !_syncService!.canSync) return;
+
+    final prefs = await SharedPreferences.getInstance();
+
+    // Load local custom phrases
+    final customPhrasesJson = prefs.getString('custom_phrases');
+    List<String> customPhrases = [];
+    if (customPhrasesJson != null) {
+      customPhrases = List<String>.from(jsonDecode(customPhrasesJson));
+    }
+    print('DEBUG _syncPhrases: local has ${customPhrases.length} custom phrases');
+
+    // Load usage counts
+    final usageJson = prefs.getString('phrase_usage');
+    Map<String, int> usageCounts = {};
+    if (usageJson != null) {
+      usageCounts = Map<String, int>.from(jsonDecode(usageJson));
+    }
+
+    // Convert to Phrase objects
+    final localPhrases = customPhrases.map((text) => Phrase(
+      text: text,
+      usageCount: usageCounts[text] ?? 0,
+    )).toList();
+
+    // Sync with server
+    final result = await _syncService!.syncPhrases(localPhrases);
+    print('DEBUG _syncPhrases: result success=${result.success}, added=${result.phrasesAdded}, merged=${result.mergedPhrases?.length}');
+
+    if (result.success && result.mergedPhrases != null) {
+      // Save merged phrases back (only custom ones, not defaults)
+      final mergedTexts = result.mergedPhrases!.map((p) => p.text).toList();
+      print('DEBUG _syncPhrases: saving ${mergedTexts.length} merged phrases');
+      await prefs.setString('custom_phrases', jsonEncode(mergedTexts));
+
+      // Update usage counts
+      final newUsage = <String, int>{};
+      for (final phrase in result.mergedPhrases!) {
+        if (phrase.usageCount > 0) {
+          newUsage[phrase.text] = phrase.usageCount;
+        }
+      }
+      await prefs.setString('phrase_usage', jsonEncode(newUsage));
     }
   }
 

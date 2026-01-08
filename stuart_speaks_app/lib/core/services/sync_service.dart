@@ -86,17 +86,24 @@ class SyncService {
 
   /// Fetch phrases from the server
   Future<List<String>?> fetchRemotePhrases() async {
+    print('DEBUG fetchRemotePhrases: canSync=$canSync');
     if (!canSync) return null;
 
     final response = await _apiClient.get('/api/phrases');
+    print('DEBUG fetchRemotePhrases: statusCode=${response.statusCode}, body=${response.body}');
 
     if (response.isSuccess) {
-      final list = response.jsonList;
-      if (list != null) {
-        return list.map((e) => e.toString()).toList();
+      // Backend returns { success: true, phrases: [...] }
+      final map = response.jsonMap;
+      print('DEBUG fetchRemotePhrases: jsonMap=$map');
+      if (map != null && map['phrases'] is List) {
+        final phrases = (map['phrases'] as List).map((e) => e.toString()).toList();
+        print('DEBUG fetchRemotePhrases: found ${phrases.length} phrases');
+        return phrases;
       }
     }
 
+    print('DEBUG fetchRemotePhrases: returning null');
     return null;
   }
 
