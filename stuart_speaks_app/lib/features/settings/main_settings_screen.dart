@@ -999,7 +999,6 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
 
   Future<void> _performSync() async {
     if (_isSyncing) return;
-    print('DEBUG _performSync: starting sync');
 
     setState(() {
       _isSyncing = true;
@@ -1008,18 +1007,13 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
 
     try {
       // Sync config (API keys, etc.)
-      print('DEBUG _performSync: syncing config...');
       await _configSyncService?.uploadConfig();
 
       // Sync vocabulary
-      print('DEBUG _performSync: syncing vocabulary...');
       final vocabResult = await _vocabularySyncService?.syncVocabulary();
-      print('DEBUG _performSync: vocabulary result: ${vocabResult?.success}, added: ${vocabResult?.wordsAdded}, merged: ${vocabResult?.wordsMerged}');
 
       // Sync phrases
-      print('DEBUG _performSync: syncing phrases...');
       await _syncPhrases();
-      print('DEBUG _performSync: phrases synced');
 
       setState(() {
         _syncStatus = SyncStatus.success;
@@ -1054,7 +1048,6 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
   }
 
   Future<void> _syncPhrases() async {
-    print('DEBUG _syncPhrases: canSync=${_syncService?.canSync}');
     if (_syncService == null || !_syncService!.canSync) return;
 
     final prefs = await SharedPreferences.getInstance();
@@ -1065,7 +1058,6 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
     if (customPhrasesJson != null) {
       customPhrases = List<String>.from(jsonDecode(customPhrasesJson));
     }
-    print('DEBUG _syncPhrases: local has ${customPhrases.length} custom phrases');
 
     // Load usage counts
     final usageJson = prefs.getString('phrase_usage');
@@ -1082,12 +1074,10 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
 
     // Sync with server
     final result = await _syncService!.syncPhrases(localPhrases);
-    print('DEBUG _syncPhrases: result success=${result.success}, added=${result.phrasesAdded}, merged=${result.mergedPhrases?.length}');
 
     if (result.success && result.mergedPhrases != null) {
       // Save merged phrases back (only custom ones, not defaults)
       final mergedTexts = result.mergedPhrases!.map((p) => p.text).toList();
-      print('DEBUG _syncPhrases: saving ${mergedTexts.length} merged phrases');
       await prefs.setString('custom_phrases', jsonEncode(mergedTexts));
 
       // Update usage counts

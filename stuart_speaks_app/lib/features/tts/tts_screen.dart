@@ -20,6 +20,10 @@ import '../../core/services/error_handler.dart';
 import '../../core/services/rate_limiter.dart';
 import '../../core/services/user_profile_service.dart';
 import '../../core/services/input_method_service.dart';
+import '../../core/services/vocabulary_sync_service.dart';
+import '../../core/services/api_client.dart';
+import '../../core/services/auth_service.dart';
+import '../../core/config/server_config.dart';
 import '../../core/utils/input_validator.dart';
 import '../../core/constants/accessibility_constants.dart';
 import '../../core/providers/tts_provider.dart';
@@ -49,6 +53,8 @@ class _TTSScreenState extends State<TTSScreen> {
   TTSProviderManager? _providerManager;
   UserProfileService? _profileService;
   InputMethodService? _inputMethodService;
+  VocabularySyncService? _vocabSyncService;
+  RateLimiter? _vocabSyncLimiter;
   List<Word> _currentSuggestions = [];
   int _currentPosition = 1; // Track current word position for color coding
   String? _currentPreviousWord; // Track previous word for bigram detection
@@ -107,6 +113,9 @@ class _TTSScreenState extends State<TTSScreen> {
       await providerManager.loadSavedConfiguration();
       _providerManager = providerManager;
 
+      // Initialize sync services and perform startup sync
+      await _initializeSyncServices(prefs);
+
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -151,6 +160,72 @@ class _TTSScreenState extends State<TTSScreen> {
     } catch (e) {
       _logger.error('Failed to reload usage tracker', error: e);
     }
+  }
+
+  /// Initialize sync services and perform startup sync
+  Future<void> _initializeSyncServices(SharedPreferences prefs) async {
+    try {
+      final serverConfig = ServerConfig(prefs);
+      if (!serverConfig.isConfigured) {
+        _logger.debug('Server not configured, skipping sync');
+        return;
+      }
+
+      final apiClient = ApiClient(serverConfig: serverConfig);
+      await apiClient.initialize();
+      final authService = AuthService(
+        apiClient: apiClient,
+        serverConfig: serverConfig,
+      );
+      await authService.checkAuthStatus();
+
+      if (!authService.isAuthenticated) {
+        _logger.debug('Not authenticated, skipping sync');
+        return;
+      }
+
+      // Initialize vocab sync service for use during speaking
+      _vocabSyncService = VocabularySyncService(
+        apiClient: apiClient,
+        authService: authService,
+        prefs: prefs,
+      );
+
+      // Initialize rate limiter for debounced vocab sync (5 second delay)
+      _vocabSyncLimiter = RateLimiter(
+        minimumDelay: const Duration(seconds: 5),
+        logger: _logger,
+      );
+
+      // Perform startup sync - download vocabulary from server
+      _logger.info('Performing startup vocabulary sync...');
+      final result = await _vocabSyncService!.syncVocabulary();
+      if (result.success) {
+        _logger.info('Startup sync complete: ${result.wordsAdded} words added, ${result.wordsMerged} merged');
+        // Reload tracker with synced data
+        await _usageTracker?.reload();
+      } else {
+        _logger.warning('Startup sync failed: ${result.errorMessage}');
+      }
+    } catch (e) {
+      _logger.error('Failed to initialize sync services', error: e);
+    }
+  }
+
+  /// Upload vocabulary to server with debouncing (5 second delay)
+  void _uploadVocabularyDebounced() {
+    if (_vocabSyncService == null || !_vocabSyncService!.canSync) return;
+    if (_vocabSyncLimiter == null) return;
+
+    _vocabSyncLimiter!.throttle('vocab_upload', () async {
+      _logger.debug('Uploading vocabulary to server...');
+      final success = await _vocabSyncService!.uploadVocabulary();
+      if (success) {
+        _logger.debug('Vocabulary uploaded successfully');
+      } else {
+        _logger.warning('Failed to upload vocabulary');
+      }
+    });
   }
 
   void _onTextChanged() {
@@ -493,6 +568,9 @@ class _TTSScreenState extends State<TTSScreen> {
       await _rateLimiter.throttle('speak', () async {
         // Track sentence usage
         _usageTracker?.trackSentence(text);
+
+        // Debounced vocabulary upload to server
+        _uploadVocabularyDebounced();
 
         // Check if we need to chunk the text
         if (TextChunker.needsChunking(text)) {

@@ -76,7 +76,6 @@ class VocabularySyncService {
 
   /// Sync vocabulary - merge local and remote, upload merged result
   Future<SyncVocabResult> syncVocabulary() async {
-    print('DEBUG syncVocabulary: canSync=$canSync');
     if (!canSync) {
       return SyncVocabResult.error('Not authenticated');
     }
@@ -95,11 +94,9 @@ class VocabularySyncService {
       if (localHistoryJson != null) {
         localHistory = List<String>.from(jsonDecode(localHistoryJson));
       }
-      print('DEBUG syncVocabulary: local vocab has ${localVocab.length} words, ${localHistory.length} history items');
 
       // Get remote vocabulary
       final response = await _apiClient.get('/api/vocabulary');
-      print('DEBUG syncVocabulary: response statusCode=${response.statusCode}, body=${response.body?.substring(0, response.body!.length.clamp(0, 200))}...');
 
       Map<String, dynamic> remoteVocab = {};
       List<String> remoteHistory = [];
@@ -112,9 +109,7 @@ class VocabularySyncService {
         if (data['textHistory'] != null) {
           remoteHistory = List<String>.from(data['textHistory']);
         }
-        print('DEBUG syncVocabulary: remote vocab has ${remoteVocab.length} words, ${remoteHistory.length} history items');
       } else {
-        print('DEBUG syncVocabulary: failed to get remote vocab');
       }
 
       // Merge vocabularies
@@ -132,9 +127,7 @@ class VocabularySyncService {
         'vocabulary': mergedVocab,
         'textHistory': mergedHistory,
       };
-      print('DEBUG syncVocabulary: uploading ${mergedVocab.length} words to server...');
       final uploadResponse = await _apiClient.post('/api/vocabulary', body: uploadData);
-      print('DEBUG syncVocabulary: upload response statusCode=${uploadResponse.statusCode}, body=${uploadResponse.body}');
 
       return SyncVocabResult.success(
         wordsAdded: mergedVocab.length - localVocab.length,
