@@ -1495,6 +1495,11 @@ class _TTSScreenState extends State<TTSScreen> {
           // Speak button and keyboard toggle row
           Row(
             children: [
+              // Keyboard toggle on LEFT for left-handed users
+              if (_inputMethodService?.isLeftHanded() ?? false) ...[
+                _buildKeyboardToggle(),
+                const SizedBox(width: 12),
+              ],
               // Speak button
               Expanded(
                 child: SizedBox(
@@ -1531,44 +1536,53 @@ class _TTSScreenState extends State<TTSScreen> {
                   ),
                 ),
               ),
-              // Keyboard toggle - only show when spinner keyboard is active
-              if (_inputMethod == InputMethod.spinnerKeyboard) ...[
+              // Keyboard toggle on RIGHT for right-handed users
+              if (!(_inputMethodService?.isLeftHanded() ?? false)) ...[
                 const SizedBox(width: 12),
-                SizedBox(
-                  height: 70,
-                  child: Material(
-                    color: _disableSystemKeyboard
-                        ? const Color(0xFF2563EB)
-                        : Colors.grey[200],
-                    borderRadius: BorderRadius.circular(12),
-                    elevation: 4,
-                    child: InkWell(
-                      onTap: () {
-                        setState(() {
-                          _disableSystemKeyboard = !_disableSystemKeyboard;
-                        });
-                        _inputMethodService?.setSystemKeyboardDisabled(_disableSystemKeyboard);
-                      },
-                      borderRadius: BorderRadius.circular(12),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Icon(
-                          _disableSystemKeyboard
-                              ? Icons.keyboard_hide
-                              : Icons.keyboard,
-                          size: 32,
-                          color: _disableSystemKeyboard
-                              ? Colors.white
-                              : Colors.grey[700],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
+                _buildKeyboardToggle(),
               ],
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  /// Build keyboard toggle button
+  Widget _buildKeyboardToggle() {
+    return SizedBox(
+      height: 70,
+      child: Material(
+        color: _disableSystemKeyboard
+            ? const Color(0xFF2563EB)
+            : Colors.grey[200],
+        borderRadius: BorderRadius.circular(12),
+        elevation: 4,
+        child: InkWell(
+          onTap: () {
+            setState(() {
+              _disableSystemKeyboard = !_disableSystemKeyboard;
+            });
+            _inputMethodService?.setSystemKeyboardDisabled(_disableSystemKeyboard);
+            // Hide keyboard if disabling
+            if (_disableSystemKeyboard) {
+              FocusScope.of(context).unfocus();
+            }
+          },
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Icon(
+              _disableSystemKeyboard
+                  ? Icons.keyboard_hide
+                  : Icons.keyboard,
+              size: 32,
+              color: _disableSystemKeyboard
+                  ? Colors.white
+                  : Colors.grey[700],
+            ),
+          ),
+        ),
       ),
     );
   }
