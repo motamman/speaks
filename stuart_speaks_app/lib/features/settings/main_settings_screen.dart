@@ -6,10 +6,17 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../../core/services/user_profile_service.dart';
 import '../../core/services/tts_provider_manager.dart';
 import '../../core/services/input_method_service.dart';
+import '../../core/services/auth_service.dart';
+import '../../core/services/sync_service.dart';
+import '../../core/services/api_client.dart';
+import '../../core/services/config_sync_service.dart';
+import '../../core/config/server_config.dart';
+import '../../core/widgets/sync_status_indicator.dart';
 import '../../core/constants/accessibility_constants.dart';
 import 'settings_screen.dart'; // TTS Provider Settings
 import 'vocabulary_screen.dart';
 import 'vocabulary_import_screen.dart';
+import '../auth/auth_screen.dart';
 
 /// Main settings screen with user profile and navigation to subsections
 class MainSettingsScreen extends StatefulWidget {
@@ -27,6 +34,7 @@ class MainSettingsScreen extends StatefulWidget {
 class _MainSettingsScreenState extends State<MainSettingsScreen> {
   final TextEditingController _firstNameController = TextEditingController();
   final TextEditingController _lastNameController = TextEditingController();
+  final TextEditingController _serverUrlController = TextEditingController();
   UserProfileService? _profileService;
   InputMethodService? _inputMethodService;
   bool _isLoading = true;
@@ -34,6 +42,15 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
   String _buildNumber = '';
   InputMethod _inputMethod = InputMethod.wordWheel;
   Handedness _handedness = Handedness.right;
+
+  // Sync services
+  ServerConfig? _serverConfig;
+  ApiClient? _apiClient;
+  AuthService? _authService;
+  SyncService? _syncService;
+  ConfigSyncService? _configSyncService;
+  SyncStatus _syncStatus = SyncStatus.idle;
+  bool _isSyncing = false;
 
   @override
   void initState() {
@@ -45,6 +62,34 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
     final prefs = await SharedPreferences.getInstance();
     _profileService = UserProfileService(prefs);
     _inputMethodService = InputMethodService(prefs);
+
+    // Initialize sync services
+    _serverConfig = ServerConfig(prefs);
+    _serverUrlController.text = _serverConfig!.getServerUrl() ?? '';
+
+    _apiClient = ApiClient(serverConfig: _serverConfig!);
+    await _apiClient!.initialize();
+
+    _authService = AuthService(
+      apiClient: _apiClient!,
+      serverConfig: _serverConfig!,
+    );
+
+    _syncService = SyncService(
+      apiClient: _apiClient!,
+      authService: _authService!,
+    );
+
+    _configSyncService = ConfigSyncService(
+      apiClient: _apiClient!,
+      authService: _authService!,
+      providerManager: widget.providerManager,
+    );
+
+    // Check auth status if server is configured
+    if (_serverConfig!.isConfigured) {
+      await _authService!.checkAuthStatus();
+    }
 
     // Load package info
     final packageInfo = await PackageInfo.fromPlatform();
@@ -92,6 +137,8 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
   void dispose() {
     _firstNameController.dispose();
     _lastNameController.dispose();
+    _serverUrlController.dispose();
+    _syncService?.dispose();
     super.dispose();
   }
 
@@ -234,6 +281,26 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
               ),
 
               const SizedBox(height: 24),
+
+              // Server Configuration Section
+              _buildSection(
+                title: 'Sync Server',
+                icon: Icons.cloud,
+                child: _buildServerConfigSection(),
+              ),
+
+              const SizedBox(height: 24),
+
+              // Account Section (only show if server is configured)
+              if (_serverConfig?.isConfigured == true)
+                _buildSection(
+                  title: 'Account',
+                  icon: Icons.account_circle,
+                  child: _buildAccountSection(),
+                ),
+
+              if (_serverConfig?.isConfigured == true)
+                const SizedBox(height: 24),
 
               // Input Method Section
               _buildSection(
@@ -745,5 +812,253 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
         ),
       ),
     );
+  }
+
+  Widget _buildServerConfigSection() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Enter your sync server URL to enable cross-device syncing.',
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey[600],
+            ),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _serverUrlController,
+            decoration: InputDecoration(
+              labelText: 'Server URL',
+              hintText: 'https://your-server.com:3003',
+              prefixIcon: const Icon(Icons.link),
+              filled: true,
+              fillColor: Colors.grey[50],
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            keyboardType: TextInputType.url,
+            autocorrect: false,
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _saveServerUrl,
+              icon: const Icon(Icons.save),
+              label: const Text('Save Server URL'),
+            ),
+          ),
+          if (_serverConfig?.isConfigured == true) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.green[600], size: 16),
+                const SizedBox(width: 8),
+                Text(
+                  'Server configured',
+                  style: TextStyle(
+                    color: Colors.green[600],
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Future<void> _saveServerUrl() async {
+    final url = _serverUrlController.text.trim();
+    await _serverConfig?.setServerUrl(url.isEmpty ? null : url);
+
+    // Clear auth cache when URL changes
+    _authService?.clearCache();
+    await _apiClient?.clearSession();
+
+    setState(() {});
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(url.isEmpty
+              ? 'Server URL cleared'
+              : 'Server URL saved'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
+  Widget _buildAccountSection() {
+    final isAuthenticated = _authService?.isAuthenticated ?? false;
+    final userEmail = _authService?.userEmail;
+
+    if (!isAuthenticated) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.grey.shade300),
+        ),
+        child: Column(
+          children: [
+            Text(
+              'Sign in to sync your phrases, settings, and audio cache across all your devices.',
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey[600],
+              ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _navigateToLogin,
+                icon: const Icon(Icons.login),
+                label: const Text('Sign In'),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return SyncStatusCard(
+      status: _syncStatus,
+      lastSync: _syncService?.lastSyncTime,
+      userEmail: userEmail,
+      onSync: _performSync,
+      onLogout: _logout,
+    );
+  }
+
+  void _navigateToLogin() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AuthScreen(
+          authService: _authService!,
+          onAuthenticated: () {
+            Navigator.pop(context);
+            _onAuthenticated();
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<void> _onAuthenticated() async {
+    // Sync config after login (download from server)
+    await _configSyncService?.syncConfig();
+
+    // Reload provider configuration
+    await widget.providerManager.loadSavedConfiguration();
+
+    setState(() {});
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Signed in successfully! Your settings have been synced.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
+  Future<void> _performSync() async {
+    if (_isSyncing) return;
+
+    setState(() {
+      _isSyncing = true;
+      _syncStatus = SyncStatus.syncing;
+    });
+
+    try {
+      // Sync config (API keys, etc.)
+      await _configSyncService?.uploadConfig();
+
+      // TODO: Sync phrases when integrated with phrases screen
+
+      setState(() {
+        _syncStatus = SyncStatus.success;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Sync completed successfully!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() {
+        _syncStatus = SyncStatus.error;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Sync failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      setState(() {
+        _isSyncing = false;
+      });
+    }
+  }
+
+  Future<void> _logout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Sign Out'),
+        content: const Text(
+          'Are you sure you want to sign out? Your local data will remain on this device.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Sign Out', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    await _authService?.logout();
+
+    setState(() {
+      _syncStatus = SyncStatus.idle;
+    });
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Signed out successfully'),
+        ),
+      );
+    }
   }
 }
