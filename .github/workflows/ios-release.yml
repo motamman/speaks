@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build-ios:
-    runs-on: macos-latest
+    runs-on: macos-26
     # Skip if this is an Android-only tag
     if: ${{ !endsWith(github.ref, '-android') }}
 
@@ -76,7 +76,6 @@ jobs:
           issuer-id: ${{ secrets.APPSTORE_ISSUER_ID }}
           api-key-id: ${{ secrets.APPSTORE_API_KEY_ID }}
           api-private-key: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
-          release-notes: ${{ steps.release_notes.outputs.NOTES }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
