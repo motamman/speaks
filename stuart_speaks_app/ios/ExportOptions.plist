@@ -11,7 +11,7 @@
     <key>provisioningProfiles</key>
     <dict>
         <key>com.mo.tamman.stuartspeaksapp</key>
-        <string>YOUR_PROVISIONING_PROFILE_NAME</string>
+        <string>StuartSpeaks AppStore</string>
     </dict>
     <key>uploadSymbols</key>
     <true/>
