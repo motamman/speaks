@@ -22,6 +22,12 @@ class WordUsageTracker {
     await _loadHistory();
   }
 
+  /// Reload vocabulary and history from storage (call after sync)
+  Future<void> reload() async {
+    await _loadVocabulary();
+    await _loadHistory();
+  }
+
   /// Track when a word is used
   void trackWordUsage(String wordText, {int? position, String? previousWord}) {
     final key = wordText.toLowerCase();
@@ -464,14 +470,29 @@ class WordUsageTracker {
     if (json != null) {
       try {
         final Map<String, dynamic> data = jsonDecode(json);
-        _vocabulary = data.map(
-          (key, value) => MapEntry(
-            key,
-            Word.fromJson(value as Map<String, dynamic>),
-          ),
-        );
+        // Parse word by word to be robust against individual parse failures
+        _vocabulary = {};
+        for (final entry in data.entries) {
+          try {
+            final wordData = entry.value as Map<String, dynamic>;
+            // Ensure required fields exist
+            if (wordData['text'] == null) {
+              // Use the key as text if not present (backward compatibility)
+              wordData['text'] = entry.key;
+            }
+            if (wordData['phonetic'] == null) {
+              // Generate simple phonetic if not present
+              wordData['phonetic'] = (wordData['text'] as String).toLowerCase();
+            }
+            _vocabulary[entry.key] = Word.fromJson(wordData);
+          } catch (e) {
+            // Skip individual words that fail to parse
+            print('Warning: Failed to parse vocabulary word "${entry.key}": $e');
+          }
+        }
       } catch (e) {
-        // If parsing fails, start fresh
+        // If overall parsing fails, start fresh
+        print('Warning: Failed to parse vocabulary JSON: $e');
         _vocabulary = {};
       }
     }

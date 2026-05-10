@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -18,10 +19,16 @@ import '../../core/services/app_logger.dart';
 import '../../core/services/error_handler.dart';
 import '../../core/services/rate_limiter.dart';
 import '../../core/services/user_profile_service.dart';
+import '../../core/services/input_method_service.dart';
+import '../../core/services/vocabulary_sync_service.dart';
+import '../../core/services/api_client.dart';
+import '../../core/services/auth_service.dart';
+import '../../core/config/server_config.dart';
 import '../../core/utils/input_validator.dart';
 import '../../core/constants/accessibility_constants.dart';
 import '../../core/providers/tts_provider.dart';
 import '../input/word_wheel/word_wheel_widget_v2.dart';
+import '../input/spinner_keyboard/spinner_keyboard_widget.dart';
 import '../settings/main_settings_screen.dart';
 import '../phrases/phrases_screen.dart';
 
@@ -45,6 +52,9 @@ class _TTSScreenState extends State<TTSScreen> {
   AudioPlaybackService? _audioService;
   TTSProviderManager? _providerManager;
   UserProfileService? _profileService;
+  InputMethodService? _inputMethodService;
+  VocabularySyncService? _vocabSyncService;
+  RateLimiter? _vocabSyncLimiter;
   List<Word> _currentSuggestions = [];
   int _currentPosition = 1; // Track current word position for color coding
   String? _currentPreviousWord; // Track previous word for bigram detection
@@ -53,6 +63,9 @@ class _TTSScreenState extends State<TTSScreen> {
   bool _isSpeaking = false;
   bool _initializationFailed = false;
   String? _initializationError;
+  InputMethod _inputMethod = InputMethod.wordWheel;
+  bool _disableSystemKeyboard = false;
+  bool _historyExpanded = false;
   static const int _maxHistoryItems = 10;
 
   @override
@@ -82,6 +95,11 @@ class _TTSScreenState extends State<TTSScreen> {
       // Initialize user profile service
       _profileService = UserProfileService(prefs);
 
+      // Initialize input method service
+      _inputMethodService = InputMethodService(prefs);
+      _inputMethod = _inputMethodService!.getInputMethod();
+      _disableSystemKeyboard = _inputMethodService!.isSystemKeyboardDisabled();
+
       // Initialize usage tracker
       final tracker = WordUsageTracker(prefs);
       await tracker.initialize();
@@ -94,6 +112,9 @@ class _TTSScreenState extends State<TTSScreen> {
       final providerManager = TTSProviderManager();
       await providerManager.loadSavedConfiguration();
       _providerManager = providerManager;
+
+      // Initialize sync services and perform startup sync
+      await _initializeSyncServices(prefs);
 
       if (mounted) {
         setState(() {
@@ -116,7 +137,7 @@ class _TTSScreenState extends State<TTSScreen> {
     }
   }
 
-  /// Reload the usage tracker to pick up newly imported vocabulary
+  /// Reload the usage tracker and settings to pick up changes
   Future<void> _reloadUsageTracker() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -124,10 +145,87 @@ class _TTSScreenState extends State<TTSScreen> {
       await tracker.initialize();
       _usageTracker = tracker;
 
-      _logger.info('Usage tracker reloaded');
+      // Also reload input method setting in case it changed
+      _inputMethodService = InputMethodService(prefs);
+      final newInputMethod = _inputMethodService!.getInputMethod();
+      final newDisableKeyboard = _inputMethodService!.isSystemKeyboardDisabled();
+      if (newInputMethod != _inputMethod || newDisableKeyboard != _disableSystemKeyboard) {
+        setState(() {
+          _inputMethod = newInputMethod;
+          _disableSystemKeyboard = newDisableKeyboard;
+        });
+      }
+
+      _logger.info('Usage tracker and settings reloaded');
     } catch (e) {
       _logger.error('Failed to reload usage tracker', error: e);
     }
+  }
+
+  /// Initialize sync services and perform startup sync
+  Future<void> _initializeSyncServices(SharedPreferences prefs) async {
+    try {
+      final serverConfig = ServerConfig(prefs);
+      if (!serverConfig.isConfigured) {
+        _logger.debug('Server not configured, skipping sync');
+        return;
+      }
+
+      final apiClient = ApiClient(serverConfig: serverConfig);
+      await apiClient.initialize();
+      final authService = AuthService(
+        apiClient: apiClient,
+        serverConfig: serverConfig,
+      );
+      await authService.checkAuthStatus();
+
+      if (!authService.isAuthenticated) {
+        _logger.debug('Not authenticated, skipping sync');
+        return;
+      }
+
+      // Initialize vocab sync service for use during speaking
+      _vocabSyncService = VocabularySyncService(
+        apiClient: apiClient,
+        authService: authService,
+        prefs: prefs,
+      );
+
+      // Initialize rate limiter for debounced vocab sync (5 second delay)
+      _vocabSyncLimiter = RateLimiter(
+        minimumDelay: const Duration(seconds: 5),
+        logger: _logger,
+      );
+
+      // Perform startup sync - download vocabulary from server
+      _logger.info('Performing startup vocabulary sync...');
+      final result = await _vocabSyncService!.syncVocabulary();
+      if (result.success) {
+        _logger.info('Startup sync complete: ${result.wordsAdded} words added, ${result.wordsMerged} merged');
+        // Reload tracker with synced data
+        await _usageTracker?.reload();
+      } else {
+        _logger.warning('Startup sync failed: ${result.errorMessage}');
+      }
+    } catch (e) {
+      _logger.error('Failed to initialize sync services', error: e);
+    }
+  }
+
+  /// Upload vocabulary to server with debouncing (5 second delay)
+  void _uploadVocabularyDebounced() {
+    if (_vocabSyncService == null || !_vocabSyncService!.canSync) return;
+    if (_vocabSyncLimiter == null) return;
+
+    _vocabSyncLimiter!.throttle('vocab_upload', () async {
+      _logger.debug('Uploading vocabulary to server...');
+      final success = await _vocabSyncService!.uploadVocabulary();
+      if (success) {
+        _logger.debug('Vocabulary uploaded successfully');
+      } else {
+        _logger.warning('Failed to upload vocabulary');
+      }
+    });
   }
 
   void _onTextChanged() {
@@ -311,7 +409,76 @@ class _TTSScreenState extends State<TTSScreen> {
     return Colors.white;
   }
 
+  /// Called when spinner keyboard completes a string
+  void _onSpinnerKeyboardComplete(String text) {
+    // Dismiss keyboard
+    FocusScope.of(context).unfocus();
+
+    final currentText = _textController.text;
+    var cursorPos = _textController.selection.baseOffset;
+
+    // Handle invalid cursor position
+    if (cursorPos < 0 || cursorPos > currentText.length) {
+      cursorPos = currentText.length;
+    }
+
+    // Detect position before inserting
+    final position = _detectWordPosition(currentText, cursorPos);
+
+    // Extract previousWord for tracking
+    String? previousWord;
+    if (position > 1) {
+      previousWord = _extractPreviousWord(currentText, cursorPos);
+    }
+
+    if (cursorPos == 0 || currentText.isEmpty) {
+      // Insert at beginning
+      _textController.text = '$text ';
+      _textController.selection = TextSelection.collapsed(
+        offset: text.length + 1,
+      );
+    } else {
+      // Replace current word or append
+      final beforeCursor = currentText.substring(0, cursorPos);
+      final afterCursor = currentText.substring(cursorPos);
+
+      final words = beforeCursor.split(RegExp(r'\s+'));
+      if (words.isNotEmpty && !beforeCursor.endsWith(' ')) {
+        // Replace current partial word
+        words[words.length - 1] = text;
+        final newBeforeCursor = '${words.join(' ')} ';
+        final newText = newBeforeCursor + afterCursor;
+
+        _textController.text = newText;
+        _textController.selection = TextSelection.collapsed(
+          offset: newBeforeCursor.length,
+        );
+      } else {
+        // Append after space - avoid double spaces
+        final needsSpace = !beforeCursor.endsWith(' ');
+        final prefix = needsSpace ? '$beforeCursor ' : beforeCursor;
+        final afterTrimmed = afterCursor.startsWith(' ') ? afterCursor.substring(1) : afterCursor;
+        final newText = '$prefix$text ${afterTrimmed.isEmpty ? '' : afterTrimmed}';
+        final trimmedNewText = newText.trimRight().isEmpty ? newText : '${newText.trimRight()} ';
+        _textController.text = trimmedNewText.replaceAll(RegExp(r' {2,}'), ' '); // Collapse multiple spaces
+        _textController.selection = TextSelection.collapsed(
+          offset: prefix.length + text.length + 1,
+        );
+      }
+    }
+
+    // Track word usage
+    _usageTracker?.trackWordUsage(
+      text,
+      position: position,
+      previousWord: previousWord,
+    );
+  }
+
   void _onWordSelected(Word word) {
+    // Dismiss keyboard when selecting a word
+    FocusScope.of(context).unfocus();
+
     final text = _textController.text;
     var cursorPos = _textController.selection.baseOffset;
 
@@ -401,6 +568,9 @@ class _TTSScreenState extends State<TTSScreen> {
       await _rateLimiter.throttle('speak', () async {
         // Track sentence usage
         _usageTracker?.trackSentence(text);
+
+        // Debounced vocabulary upload to server
+        _uploadVocabularyDebounced();
 
         // Check if we need to chunk the text
         if (TextChunker.needsChunking(text)) {
@@ -1002,6 +1172,37 @@ class _TTSScreenState extends State<TTSScreen> {
 
   /// Phone layout - vertical stack (current layout)
   Widget _buildPhoneLayout() {
+    // For spinner keyboard: full-width spinner with collapsible history overlay
+    if (_inputMethod == InputMethod.spinnerKeyboard) {
+      return Column(
+        children: [
+          _buildInputArea(),
+          Expanded(
+            child: Stack(
+              children: [
+                // Spinner fills available space with bottom padding
+                Positioned.fill(
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 60),
+                    child: _buildWordWheel(),
+                  ),
+                ),
+                // History overlay (collapsed by default, expands to cover spinner)
+                if (_speechHistory.isNotEmpty)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: _buildCollapsibleHistory(),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    // For word wheel: original flex layout
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1029,11 +1230,6 @@ class _TTSScreenState extends State<TTSScreen> {
           flex: 1,
           child: Container(
             width: double.infinity,
-            decoration: BoxDecoration(
-              border: Border(
-                top: BorderSide(color: Colors.grey[300]!, width: 1),
-              ),
-            ),
             child: _speechHistory.isEmpty
                 ? const SizedBox.shrink()
                 : SingleChildScrollView(
@@ -1047,6 +1243,36 @@ class _TTSScreenState extends State<TTSScreen> {
 
   /// Tablet portrait layout - 2/3 top (text entry + wheel), 1/3 bottom (recent phrases)
   Widget _buildTabletPortraitLayout() {
+    // For spinner keyboard: full-width spinner with collapsible history overlay
+    if (_inputMethod == InputMethod.spinnerKeyboard) {
+      return Column(
+        children: [
+          _buildInputArea(),
+          Expanded(
+            child: Stack(
+              children: [
+                // Spinner fills available space with bottom padding
+                Positioned.fill(
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 60),
+                    child: Center(child: _buildWordWheel()),
+                  ),
+                ),
+                // History overlay (collapsed by default, expands to cover spinner)
+                if (_speechHistory.isNotEmpty)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: _buildCollapsibleHistory(),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1074,11 +1300,6 @@ class _TTSScreenState extends State<TTSScreen> {
           flex: 1,
           child: Container(
             width: double.infinity,
-            decoration: BoxDecoration(
-              border: Border(
-                top: BorderSide(color: Colors.grey[300]!, width: 1),
-              ),
-            ),
             child: _speechHistory.isEmpty
                 ? const SizedBox.shrink()
                 : SingleChildScrollView(
@@ -1092,6 +1313,36 @@ class _TTSScreenState extends State<TTSScreen> {
 
   /// Tablet landscape layout - 2/3 top (input full width), 1/3 bottom (wheel left, phrases right)
   Widget _buildTabletLandscapeLayout() {
+    // For spinner keyboard: full-width spinner with collapsible history overlay
+    if (_inputMethod == InputMethod.spinnerKeyboard) {
+      return Column(
+        children: [
+          _buildInputArea(isLandscape: true),
+          Expanded(
+            child: Stack(
+              children: [
+                // Spinner fills available space with bottom padding
+                Positioned.fill(
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 60),
+                    child: Center(child: _buildWordWheel()),
+                  ),
+                ),
+                // History overlay (collapsed by default, expands to cover spinner)
+                if (_speechHistory.isNotEmpty)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: _buildCollapsibleHistory(),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
     final mediaQuery = MediaQuery.of(context);
     final keyboardHeight = mediaQuery.viewInsets.bottom;
 
@@ -1161,6 +1412,8 @@ class _TTSScreenState extends State<TTSScreen> {
                     key: _textFieldKey,
                     controller: _textController,
                     focusNode: _textFieldFocus,
+                    readOnly: _inputMethod == InputMethod.spinnerKeyboard && _disableSystemKeyboard,
+                    showCursor: true,
                     maxLines: null,
                     expands: true,
                     textAlignVertical: TextAlignVertical.top,
@@ -1194,6 +1447,8 @@ class _TTSScreenState extends State<TTSScreen> {
                   key: _textFieldKey,
                   controller: _textController,
                   focusNode: _textFieldFocus,
+                  readOnly: _inputMethod == InputMethod.spinnerKeyboard && _disableSystemKeyboard,
+                  showCursor: true,
                   maxLines: 6,
                   textAlignVertical: TextAlignVertical.top,
                   style: const TextStyle(
@@ -1315,47 +1570,102 @@ class _TTSScreenState extends State<TTSScreen> {
 
           const SizedBox(height: 16),
 
-          // Speak button
-          SizedBox(
-            width: double.infinity,
-            height: 70,
-            child: ElevatedButton(
-              onPressed: _isSpeaking ? null : _onSpeak,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF2563EB),
-                foregroundColor: Colors.white,
-                disabledBackgroundColor: Colors.grey[300],
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                elevation: 4,
-              ),
-              child: _isSpeaking
-                  ? const CircularProgressIndicator(
-                      color: Colors.white,
-                    )
-                  : const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.volume_up, size: 32),
-                        SizedBox(width: 12),
-                        Text(
-                          'SPEAK NOW',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
+          // Speak button and keyboard toggle row
+          Row(
+            children: [
+              // Keyboard toggle on LEFT for left-handed users
+              if (_inputMethodService?.isLeftHanded() ?? false) ...[
+                _buildKeyboardToggle(),
+                const SizedBox(width: 12),
+              ],
+              // Speak button
+              Expanded(
+                child: SizedBox(
+                  height: 70,
+                  child: ElevatedButton(
+                    onPressed: _isSpeaking ? null : _onSpeak,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF2563EB),
+                      foregroundColor: Colors.white,
+                      disabledBackgroundColor: Colors.grey[300],
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 4,
                     ),
-            ),
+                    child: _isSpeaking
+                        ? const CircularProgressIndicator(
+                            color: Colors.white,
+                          )
+                        : const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.volume_up, size: 32),
+                              SizedBox(width: 12),
+                              Text(
+                                'SPEAK NOW',
+                                style: TextStyle(
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                  ),
+                ),
+              ),
+              // Keyboard toggle on RIGHT for right-handed users
+              if (!(_inputMethodService?.isLeftHanded() ?? false)) ...[
+                const SizedBox(width: 12),
+                _buildKeyboardToggle(),
+              ],
+            ],
           ),
         ],
       ),
     );
   }
 
-  /// Build word wheel - scales to fill available area (elliptical)
+  /// Build keyboard toggle button
+  Widget _buildKeyboardToggle() {
+    return SizedBox(
+      height: 70,
+      child: Material(
+        color: _disableSystemKeyboard
+            ? const Color(0xFF2563EB)
+            : Colors.grey[200],
+        borderRadius: BorderRadius.circular(12),
+        elevation: 4,
+        child: InkWell(
+          onTap: () {
+            setState(() {
+              _disableSystemKeyboard = !_disableSystemKeyboard;
+            });
+            _inputMethodService?.setSystemKeyboardDisabled(_disableSystemKeyboard);
+            // Hide keyboard if disabling
+            if (_disableSystemKeyboard) {
+              FocusScope.of(context).unfocus();
+            }
+          },
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Icon(
+              _disableSystemKeyboard
+                  ? Icons.keyboard_hide
+                  : Icons.keyboard,
+              size: 32,
+              color: _disableSystemKeyboard
+                  ? Colors.white
+                  : Colors.grey[700],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Build input method (word wheel or spinner keyboard) - scales to fill available area
   Widget _buildWordWheel() {
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -1367,6 +1677,57 @@ class _TTSScreenState extends State<TTSScreen> {
             ? constraints.maxHeight * 0.9  // 90% of available height
             : 400.0;
 
+        // Check which input method to use
+        if (_inputMethod == InputMethod.spinnerKeyboard) {
+          final isLeftHanded = _inputMethodService?.isLeftHanded() ?? false;
+          // Full screen width (use MediaQuery, not constraints which may be limited)
+          final screenWidth = MediaQuery.of(context).size.width;
+          return SizedBox(
+            width: screenWidth,
+            height: screenWidth,
+            child: SpinnerKeyboardWidget(
+              key: ValueKey(_usageTracker),
+              wordTracker: _usageTracker,
+              onStringCompleted: _onSpinnerKeyboardComplete,
+              alwaysVisible: true,
+              isLeftHanded: isLeftHanded,
+              onBackspaceToTextField: () {
+                final text = _textController.text;
+                final selection = _textController.selection;
+                if (text.isNotEmpty && selection.baseOffset > 0) {
+                  final newText = text.substring(0, selection.baseOffset - 1) +
+                      text.substring(selection.baseOffset);
+                  _textController.text = newText;
+                  _textController.selection = TextSelection.collapsed(
+                    offset: selection.baseOffset - 1,
+                  );
+                }
+              },
+              onClearWordInTextField: () {
+                final text = _textController.text;
+                final selection = _textController.selection;
+                if (text.isNotEmpty && selection.baseOffset > 0) {
+                  // Find start of current/previous word
+                  var start = selection.baseOffset - 1;
+                  // Skip trailing spaces
+                  while (start > 0 && text[start] == ' ') {
+                    start--;
+                  }
+                  // Find word start
+                  while (start > 0 && text[start - 1] != ' ') {
+                    start--;
+                  }
+                  final newText = text.substring(0, start) +
+                      text.substring(selection.baseOffset);
+                  _textController.text = newText;
+                  _textController.selection = TextSelection.collapsed(offset: start);
+                }
+              },
+            ),
+          );
+        }
+
+        // Default: Word Wheel
         // Use current suggestions (already position-aware from _onTextChanged)
         // Fallback: if empty, get position-aware suggestions
         final words = _currentSuggestions.isNotEmpty
@@ -1405,6 +1766,94 @@ class _TTSScreenState extends State<TTSScreen> {
           ),
         );
       },
+    );
+  }
+
+  /// Build collapsible history overlay for spinner keyboard mode
+  Widget _buildCollapsibleHistory() {
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _historyExpanded = !_historyExpanded;
+        });
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.2),
+              blurRadius: 8,
+              offset: const Offset(0, -2),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle bar
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.grey[400],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            // Header
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Row(
+                children: [
+                  Text(
+                    'Recent Phrases',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: const Color(0xFF2563EB),
+                      fontSize: 16,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2563EB),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '${_speechHistory.length}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  const Spacer(),
+                  Icon(
+                    _historyExpanded ? Icons.expand_more : Icons.expand_less,
+                    color: Colors.grey[600],
+                  ),
+                ],
+              ),
+            ),
+            // Expanded content
+            if (_historyExpanded)
+              Container(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.5,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: _speechHistory.map((item) => _buildHistoryItem(item)).toList(),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 

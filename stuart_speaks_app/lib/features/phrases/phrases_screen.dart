@@ -15,6 +15,10 @@ import '../../core/services/tts_provider_manager.dart';
 import '../../core/services/app_logger.dart';
 import '../../core/services/error_handler.dart';
 import '../../core/services/phrase_exclusion_tracker.dart';
+import '../../core/services/sync_service.dart';
+import '../../core/services/api_client.dart';
+import '../../core/services/auth_service.dart';
+import '../../core/config/server_config.dart';
 import '../../core/utils/input_validator.dart';
 import '../../core/constants/accessibility_constants.dart';
 import '../../core/providers/tts_provider.dart';
@@ -46,6 +50,9 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
   String? _currentlySpeaking;
   PhraseExclusionTracker? _exclusionTracker;
 
+  // Sync services for real-time phrase sync
+  SyncService? _syncService;
+
   @override
   void initState() {
     super.initState();
@@ -59,6 +66,22 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
       // Initialize exclusion tracker
       _exclusionTracker = PhraseExclusionTracker(prefs);
       await _exclusionTracker!.initialize();
+
+      // Initialize sync service for real-time sync
+      final serverConfig = ServerConfig(prefs);
+      if (serverConfig.isConfigured) {
+        final apiClient = ApiClient(serverConfig: serverConfig);
+        await apiClient.initialize();
+        final authService = AuthService(
+          apiClient: apiClient,
+          serverConfig: serverConfig,
+        );
+        await authService.checkAuthStatus();
+        _syncService = SyncService(
+          apiClient: apiClient,
+          authService: authService,
+        );
+      }
 
       // Load cached audio from persistent storage
       await _loadAudioCache();
@@ -220,6 +243,17 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
       _phrases.remove(phrase);
     });
 
+    // Delete from server if sync is available
+    if (_syncService != null && _syncService!.canSync) {
+      _syncService!.deleteRemotePhrase(phrase.text).then((success) {
+        if (success) {
+          _logger.debug('Phrase deleted from server: ${phrase.text}');
+        } else {
+          _logger.warning('Failed to delete phrase from server: ${phrase.text}');
+        }
+      });
+    }
+
     // Also remove from audio cache and metadata (both memory and persistent)
     _audioCache.remove(phrase.text);
     _audioCacheMimeTypes.remove(phrase.text);
@@ -248,6 +282,17 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
       _phrases.insert(0, Phrase(text: trimmed, usageCount: 0));
     });
     await _savePhrases();
+
+    // Push to server if sync is available
+    if (_syncService != null && _syncService!.canSync) {
+      _syncService!.pushPhrase(trimmed).then((success) {
+        if (success) {
+          _logger.debug('Phrase synced to server: $trimmed');
+        } else {
+          _logger.warning('Failed to sync phrase to server: $trimmed');
+        }
+      });
+    }
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
