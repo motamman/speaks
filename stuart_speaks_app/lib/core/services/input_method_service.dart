@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 const String _inputMethodKey = 'input_method';
 const String _handednessKey = 'handedness';
 const String _disableSystemKeyboardKey = 'disable_system_keyboard';
+const String _inputModeKey = 'input_mode';
 
 /// Input method options
 enum InputMethod {
@@ -15,6 +16,12 @@ enum InputMethod {
 enum Handedness {
   right,
   left,
+}
+
+/// Input mode: hardware-keyboard driven vs touch-augmented
+enum InputMode {
+  typeOnly,
+  typeAndTouch,
 }
 
 /// Service for managing the user's preferred input method
@@ -67,6 +74,23 @@ class InputMethodService {
   /// Check if left-handed
   bool isLeftHanded() {
     return getHandedness() == Handedness.left;
+  }
+
+  /// Get the current input mode preference
+  InputMode getInputMode() {
+    final saved = _prefs.getString(_inputModeKey);
+    if (saved == 'typeAndTouch') {
+      return InputMode.typeAndTouch;
+    }
+    return InputMode.typeOnly; // Default for hardware-keyboard users
+  }
+
+  /// Set the input mode preference
+  Future<void> setInputMode(InputMode mode) async {
+    await _prefs.setString(
+      _inputModeKey,
+      mode == InputMode.typeAndTouch ? 'typeAndTouch' : 'typeOnly',
+    );
   }
 
   /// Get whether system keyboard is disabled

@@ -48,6 +48,7 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
   String _buildNumber = '';
   InputMethod _inputMethod = InputMethod.wordWheel;
   Handedness _handedness = Handedness.right;
+  InputMode _inputMode = InputMode.typeOnly;
 
   // Sync services
   ServerConfig? _serverConfig;
@@ -112,6 +113,7 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
     // Load input method preference
     _inputMethod = _inputMethodService!.getInputMethod();
     _handedness = _inputMethodService!.getHandedness();
+    _inputMode = _inputMethodService!.getInputMode();
 
     setState(() {
       _firstNameController.text = _profileService!.getFirstName();
@@ -136,6 +138,13 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
       _handedness = handedness;
     });
     _inputMethodService?.setHandedness(handedness);
+  }
+
+  void _setInputMode(InputMode mode) {
+    setState(() {
+      _inputMode = mode;
+    });
+    _inputMethodService?.setInputMode(mode);
   }
 
   void _saveProfile() {
@@ -405,6 +414,32 @@ class _MainSettingsScreenState extends State<MainSettingsScreen> {
           //       ],
           //     ),
           //   ),
+
+          // Keyboard mode section
+          Text(
+            'Keyboard mode:',
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey[700],
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          _buildInputMethodOption(
+            title: 'Type only',
+            subtitle: 'Hardware keyboard: F1-F12 pick suggestions, Enter speaks. Word wheel hidden.',
+            icon: Icons.keyboard,
+            isSelected: _inputMode == InputMode.typeOnly,
+            onTap: () => _setInputMode(InputMode.typeOnly),
+          ),
+          const SizedBox(height: 12),
+          _buildInputMethodOption(
+            title: 'Type and touch',
+            subtitle: 'On-screen word wheel and scrolling suggestions. Enter still speaks.',
+            icon: Icons.touch_app,
+            isSelected: _inputMode == InputMode.typeAndTouch,
+            onTap: () => _setInputMode(InputMode.typeAndTouch),
+          ),
 
           const SizedBox(height: 24),
 

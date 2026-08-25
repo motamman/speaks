@@ -4,6 +4,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:share_plus/share_plus.dart' show Share, XFile;
 import 'package:path_provider/path_provider.dart';
@@ -31,6 +32,7 @@ import '../input/word_wheel/word_wheel_widget_v2.dart';
 import '../input/spinner_keyboard/spinner_keyboard_widget.dart';
 import '../settings/main_settings_screen.dart';
 import '../phrases/phrases_screen.dart';
+import 'sentence_input_formatter.dart';
 
 /// Main TTS screen with predictive word wheel
 class TTSScreen extends StatefulWidget {
@@ -65,8 +67,25 @@ class _TTSScreenState extends State<TTSScreen> {
   String? _initializationError;
   InputMethod _inputMethod = InputMethod.wordWheel;
   bool _disableSystemKeyboard = false;
+  InputMode _inputMode = InputMode.typeOnly;
+  late final SentenceInputFormatter _sentenceFormatter;
+  DateTime _lastEnterSubmit = DateTime.fromMillisecondsSinceEpoch(0);
   bool _historyExpanded = false;
   static const int _maxHistoryItems = 10;
+  static final Map<LogicalKeyboardKey, int> _fKeyIndex = {
+    LogicalKeyboardKey.f1: 0,
+    LogicalKeyboardKey.f2: 1,
+    LogicalKeyboardKey.f3: 2,
+    LogicalKeyboardKey.f4: 3,
+    LogicalKeyboardKey.f5: 4,
+    LogicalKeyboardKey.f6: 5,
+    LogicalKeyboardKey.f7: 6,
+    LogicalKeyboardKey.f8: 7,
+    LogicalKeyboardKey.f9: 8,
+    LogicalKeyboardKey.f10: 9,
+    LogicalKeyboardKey.f11: 10,
+    LogicalKeyboardKey.f12: 11,
+  };
 
   @override
   void initState() {
@@ -75,6 +94,7 @@ class _TTSScreenState extends State<TTSScreen> {
       minimumDelay: const Duration(milliseconds: 500),
       logger: _logger,
     );
+    _sentenceFormatter = SentenceInputFormatter(onEnterDetected: _submitFromEnter);
     _initialize();
     _textController.addListener(_onTextChanged);
   }
@@ -99,6 +119,7 @@ class _TTSScreenState extends State<TTSScreen> {
       _inputMethodService = InputMethodService(prefs);
       _inputMethod = _inputMethodService!.getInputMethod();
       _disableSystemKeyboard = _inputMethodService!.isSystemKeyboardDisabled();
+      _inputMode = _inputMethodService!.getInputMode();
 
       // Initialize usage tracker
       final tracker = WordUsageTracker(prefs);
@@ -121,6 +142,12 @@ class _TTSScreenState extends State<TTSScreen> {
           _isLoading = false;
           _initializationFailed = false;
         });
+        // Populate initial suggestions so the type-only grid (and F1-F12
+        // shortcuts) work before the first keystroke.
+        _onTextChanged();
+        if (_inputMode == InputMode.typeOnly) {
+          _textFieldFocus.requestFocus();
+        }
       }
 
       _logger.info('Initialization completed successfully');
@@ -149,11 +176,18 @@ class _TTSScreenState extends State<TTSScreen> {
       _inputMethodService = InputMethodService(prefs);
       final newInputMethod = _inputMethodService!.getInputMethod();
       final newDisableKeyboard = _inputMethodService!.isSystemKeyboardDisabled();
-      if (newInputMethod != _inputMethod || newDisableKeyboard != _disableSystemKeyboard) {
+      final newInputMode = _inputMethodService!.getInputMode();
+      if (newInputMethod != _inputMethod ||
+          newDisableKeyboard != _disableSystemKeyboard ||
+          newInputMode != _inputMode) {
         setState(() {
           _inputMethod = newInputMethod;
           _disableSystemKeyboard = newDisableKeyboard;
+          _inputMode = newInputMode;
         });
+      }
+      if (mounted && newInputMode == InputMode.typeOnly) {
+        _textFieldFocus.requestFocus();
       }
 
       _logger.info('Usage tracker and settings reloaded');
@@ -476,8 +510,13 @@ class _TTSScreenState extends State<TTSScreen> {
   }
 
   void _onWordSelected(Word word) {
-    // Dismiss keyboard when selecting a word
-    FocusScope.of(context).unfocus();
+    if (_inputMode == InputMode.typeOnly) {
+      // Keep focus so the hardware keyboard can continue typing / using F-keys
+      _textFieldFocus.requestFocus();
+    } else {
+      // Dismiss keyboard when selecting a word
+      FocusScope.of(context).unfocus();
+    }
 
     final text = _textController.text;
     var cursorPos = _textController.selection.baseOffset;
@@ -526,6 +565,49 @@ class _TTSScreenState extends State<TTSScreen> {
       position: position,
       previousWord: previousWord,
     );
+  }
+
+  /// Submit the current text for speech in response to Enter (hardware key,
+  /// soft-keyboard send action, or the formatter's newline backstop).
+  void _submitFromEnter() {
+    final now = DateTime.now();
+    // Multiple Enter-detection layers can fire for one keypress
+    if (now.difference(_lastEnterSubmit).inMilliseconds < 300) return;
+    _lastEnterSubmit = now;
+    if (_isSpeaking) return;
+    if (_textController.text.trim().isEmpty) return;
+    _onSpeak();
+    if (_inputMode == InputMode.typeOnly) {
+      _textFieldFocus.requestFocus();
+    }
+  }
+
+  /// Intercept hardware Enter on the text field so it speaks instead of
+  /// inserting a newline.
+  KeyEventResult _handleTextFieldKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+      _submitFromEnter();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  /// Screen-level handler: in type-only mode, F1-F12 select the matching
+  /// suggested word.
+  KeyEventResult _handleScreenKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (_inputMode == InputMode.typeOnly) {
+      final index = _fKeyIndex[event.logicalKey];
+      if (index != null) {
+        if (index < _currentSuggestions.length) {
+          _onWordSelected(_currentSuggestions[index]);
+        }
+        return KeyEventResult.handled;
+      }
+    }
+    return KeyEventResult.ignored;
   }
 
   Future<void> _onSpeak() async {
@@ -1118,19 +1200,24 @@ class _TTSScreenState extends State<TTSScreen> {
         ],
       ),
       body: SafeArea(
-        child: GestureDetector(
-          onHorizontalDragEnd: (details) {
-            // Detect swipe velocity to determine if it's a swipe gesture
-            if (details.primaryVelocity != null) {
-              if (details.primaryVelocity!.abs() > 500) {
-                // Velocity threshold met - navigate to phrases screen
-                _navigateToPhrasesScreen();
+        child: Focus(
+          onKeyEvent: _handleScreenKey,
+          canRequestFocus: false,
+          skipTraversal: true,
+          child: GestureDetector(
+            onHorizontalDragEnd: (details) {
+              // Detect swipe velocity to determine if it's a swipe gesture
+              if (details.primaryVelocity != null) {
+                if (details.primaryVelocity!.abs() > 500) {
+                  // Velocity threshold met - navigate to phrases screen
+                  _navigateToPhrasesScreen();
+                }
               }
-            }
-          },
-          child: isTablet
-              ? (isLandscape ? _buildTabletLandscapeLayout() : _buildTabletPortraitLayout())
-              : _buildPhoneLayout(),
+            },
+            child: isTablet
+                ? (isLandscape ? _buildTabletLandscapeLayout() : _buildTabletPortraitLayout())
+                : _buildPhoneLayout(),
+          ),
         ),
       ),
     );
@@ -1202,6 +1289,11 @@ class _TTSScreenState extends State<TTSScreen> {
       );
     }
 
+    // Type-only mode: no word wheel, history fills the freed space
+    if (_inputMode == InputMode.typeOnly) {
+      return _buildTypeOnlyLayout();
+    }
+
     // For word wheel: original flex layout
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1229,6 +1321,27 @@ class _TTSScreenState extends State<TTSScreen> {
         Expanded(
           flex: 1,
           child: Container(
+            width: double.infinity,
+            child: _speechHistory.isEmpty
+                ? const SizedBox.shrink()
+                : SingleChildScrollView(
+                    child: _buildPhrasesList(),
+                  ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Type-only mode layout (phone and tablet portrait): input area on top,
+  /// recent phrases fill the space the word wheel would have used
+  Widget _buildTypeOnlyLayout() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildInputArea(),
+        Expanded(
+          child: SizedBox(
             width: double.infinity,
             child: _speechHistory.isEmpty
                 ? const SizedBox.shrink()
@@ -1271,6 +1384,11 @@ class _TTSScreenState extends State<TTSScreen> {
           ),
         ],
       );
+    }
+
+    // Type-only mode: no word wheel, history fills the freed space
+    if (_inputMode == InputMode.typeOnly) {
+      return _buildTypeOnlyLayout();
     }
 
     return Column(
@@ -1374,12 +1492,14 @@ class _TTSScreenState extends State<TTSScreen> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Word wheel (left half) - centered in quadrant
-                  Expanded(
-                    child: Center(child: _buildWordWheel()),
-                  ),
+                  // Word wheel (left half) - centered in quadrant; hidden in
+                  // type-only mode so phrases take the full width
+                  if (_inputMode != InputMode.typeOnly)
+                    Expanded(
+                      child: Center(child: _buildWordWheel()),
+                    ),
 
-                  // Phrases list (right half) - flush left and top
+                  // Phrases list - flush left and top
                   Expanded(
                     child: Align(
                       alignment: Alignment.topLeft,
@@ -1408,14 +1528,59 @@ class _TTSScreenState extends State<TTSScreen> {
           // Text field - expandable in landscape, fixed in portrait
           isLandscape
               ? Expanded(
+                  child: Focus(
+                    onKeyEvent: _handleTextFieldKey,
+                    child: TextField(
+                      key: _textFieldKey,
+                      controller: _textController,
+                      focusNode: _textFieldFocus,
+                      readOnly: _inputMethod == InputMethod.spinnerKeyboard && _disableSystemKeyboard,
+                      showCursor: true,
+                      maxLines: null,
+                      expands: true,
+                      textInputAction: TextInputAction.send,
+                      onSubmitted: (_) => _submitFromEnter(),
+                      inputFormatters: [_sentenceFormatter],
+                      textAlignVertical: TextAlignVertical.top,
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      decoration: InputDecoration(
+                        hintText: 'Type here...',
+                        hintStyle: TextStyle(
+                          color: Colors.grey[400],
+                          fontSize: 18,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(width: 2),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(
+                            color: Colors.blue,
+                            width: 2,
+                          ),
+                        ),
+                        filled: true,
+                        fillColor: Colors.grey[50],
+                      ),
+                    ),
+                  ),
+                )
+              : Focus(
+                  onKeyEvent: _handleTextFieldKey,
                   child: TextField(
                     key: _textFieldKey,
                     controller: _textController,
                     focusNode: _textFieldFocus,
                     readOnly: _inputMethod == InputMethod.spinnerKeyboard && _disableSystemKeyboard,
                     showCursor: true,
-                    maxLines: null,
-                    expands: true,
+                    maxLines: 6,
+                    textInputAction: TextInputAction.send,
+                    onSubmitted: (_) => _submitFromEnter(),
+                    inputFormatters: [_sentenceFormatter],
                     textAlignVertical: TextAlignVertical.top,
                     style: const TextStyle(
                       fontSize: 20,
@@ -1442,129 +1607,16 @@ class _TTSScreenState extends State<TTSScreen> {
                       fillColor: Colors.grey[50],
                     ),
                   ),
-                )
-              : TextField(
-                  key: _textFieldKey,
-                  controller: _textController,
-                  focusNode: _textFieldFocus,
-                  readOnly: _inputMethod == InputMethod.spinnerKeyboard && _disableSystemKeyboard,
-                  showCursor: true,
-                  maxLines: 6,
-                  textAlignVertical: TextAlignVertical.top,
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: 'Type here...',
-                    hintStyle: TextStyle(
-                      color: Colors.grey[400],
-                      fontSize: 18,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(width: 2),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(
-                        color: Colors.blue,
-                        width: 2,
-                      ),
-                    ),
-                    filled: true,
-                    fillColor: Colors.grey[50],
-                  ),
                 ),
 
           // Word suggestions bar - always reserve space for consistent layout
           Container(
             margin: const EdgeInsets.only(top: 8),
-            height: 50,
+            height: _inputMode == InputMode.typeOnly ? 110 : 50,
             child: _currentSuggestions.isNotEmpty
-                ? Stack(
-                    children: [
-                      ListView.builder(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: _currentSuggestions.length, // Show all 12 suggestions
-                        itemBuilder: (context, index) {
-                          final word = _currentSuggestions[index];
-                          return Padding(
-                            padding: EdgeInsets.only(
-                              right: 8.0,
-                              left: index == 0 ? 0 : 0,
-                            ),
-                            child: Material(
-                              color: _getWordButtonColor(word),
-                              borderRadius: BorderRadius.circular(8),
-                              elevation: 2,
-                              child: InkWell(
-                                onTap: () => _onWordSelected(word),
-                                borderRadius: BorderRadius.circular(8),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 12,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    border: Border.all(
-                                      color: index == 0
-                                          ? const Color(0xFF2563EB)
-                                          : Colors.grey[300]!,
-                                      width: index == 0 ? 2 : 1,
-                                    ),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Text(
-                                    word.text,
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: index == 0
-                                          ? FontWeight.bold
-                                          : FontWeight.normal,
-                                      color: index == 0
-                                          ? const Color(0xFF2563EB)
-                                          : Colors.black87,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-
-                      // Right fade gradient and arrow to indicate more content
-                      if (_currentSuggestions.length > 4)
-                        Positioned(
-                          right: 0,
-                          top: 0,
-                          bottom: 0,
-                          child: IgnorePointer(
-                            child: Container(
-                              width: 60,
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  begin: Alignment.centerLeft,
-                                  end: Alignment.centerRight,
-                                  colors: [
-                                    Colors.white.withOpacity(0.0),
-                                    Colors.white.withOpacity(0.95),
-                                  ],
-                                ),
-                              ),
-                              child: const Center(
-                                child: Icon(
-                                  Icons.chevron_right,
-                                  color: Color(0xFF2563EB),
-                                  size: 24,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  )
+                ? (_inputMode == InputMode.typeOnly
+                    ? _buildSuggestionGrid()
+                    : _buildSuggestionScrollRow())
                 : const SizedBox.shrink(), // Empty space when no suggestions
           ),
 
@@ -1573,8 +1625,10 @@ class _TTSScreenState extends State<TTSScreen> {
           // Speak button and keyboard toggle row
           Row(
             children: [
-              // Keyboard toggle on LEFT for left-handed users
+              // Toggles on LEFT for left-handed users
               if (_inputMethodService?.isLeftHanded() ?? false) ...[
+                _buildInputModeToggle(),
+                const SizedBox(width: 12),
                 _buildKeyboardToggle(),
                 const SizedBox(width: 12),
               ],
@@ -1614,14 +1668,198 @@ class _TTSScreenState extends State<TTSScreen> {
                   ),
                 ),
               ),
-              // Keyboard toggle on RIGHT for right-handed users
+              // Toggles on RIGHT for right-handed users
               if (!(_inputMethodService?.isLeftHanded() ?? false)) ...[
                 const SizedBox(width: 12),
                 _buildKeyboardToggle(),
+                const SizedBox(width: 12),
+                _buildInputModeToggle(),
               ],
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  /// Build a single suggestion chip; the F-key badge variant is used by the
+  /// type-only grid.
+  Widget _buildSuggestionChip(Word word, int index, {bool showFKeyBadge = false}) {
+    return Material(
+      color: _getWordButtonColor(word),
+      borderRadius: BorderRadius.circular(8),
+      elevation: 2,
+      child: InkWell(
+        onTap: () => _onWordSelected(word),
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: showFKeyBadge
+              ? const EdgeInsets.symmetric(horizontal: 6, vertical: 4)
+              : const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: index == 0
+                  ? const Color(0xFF2563EB)
+                  : Colors.grey[300]!,
+              width: index == 0 ? 2 : 1,
+            ),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: showFKeyBadge
+              ? Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      'F${index + 1}',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: index == 0
+                            ? const Color(0xFF2563EB)
+                            : Colors.grey[600],
+                      ),
+                    ),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        word.text,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: index == 0
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                          color: index == 0
+                              ? const Color(0xFF2563EB)
+                              : Colors.black87,
+                        ),
+                      ),
+                    ),
+                  ],
+                )
+              : Text(
+                  word.text,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: index == 0
+                        ? FontWeight.bold
+                        : FontWeight.normal,
+                    color: index == 0
+                        ? const Color(0xFF2563EB)
+                        : Colors.black87,
+                  ),
+                ),
+        ),
+      ),
+    );
+  }
+
+  /// Horizontal scrolling suggestion row (type-and-touch mode)
+  Widget _buildSuggestionScrollRow() {
+    return Stack(
+      children: [
+        ListView.builder(
+          scrollDirection: Axis.horizontal,
+          itemCount: _currentSuggestions.length, // Show all 12 suggestions
+          itemBuilder: (context, index) {
+            return Padding(
+              padding: const EdgeInsets.only(right: 8.0),
+              child: _buildSuggestionChip(_currentSuggestions[index], index),
+            );
+          },
+        ),
+
+        // Right fade gradient and arrow to indicate more content
+        if (_currentSuggestions.length > 4)
+          Positioned(
+            right: 0,
+            top: 0,
+            bottom: 0,
+            child: IgnorePointer(
+              child: Container(
+                width: 60,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                    colors: [
+                      Colors.white.withOpacity(0.0),
+                      Colors.white.withOpacity(0.95),
+                    ],
+                  ),
+                ),
+                child: const Center(
+                  child: Icon(
+                    Icons.chevron_right,
+                    color: Color(0xFF2563EB),
+                    size: 24,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Fixed 2x6 grid of all 12 suggestions with F-key labels (type-only mode)
+  Widget _buildSuggestionGrid() {
+    Widget cell(int index) => index < _currentSuggestions.length
+        ? _buildSuggestionChip(_currentSuggestions[index], index, showFKeyBadge: true)
+        : const SizedBox.shrink();
+
+    Widget row(int start) => Expanded(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var i = start; i < start + 6; i++)
+                Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.only(right: i == start + 5 ? 0 : 6),
+                    child: cell(i),
+                  ),
+                ),
+            ],
+          ),
+        );
+
+    return Column(
+      children: [
+        row(0),
+        const SizedBox(height: 6),
+        row(6),
+      ],
+    );
+  }
+
+  /// Build input mode toggle button (type only vs type and touch)
+  Widget _buildInputModeToggle() {
+    final isTypeOnly = _inputMode == InputMode.typeOnly;
+    return SizedBox(
+      height: 70,
+      child: Material(
+        color: isTypeOnly ? const Color(0xFF2563EB) : Colors.grey[200],
+        borderRadius: BorderRadius.circular(12),
+        elevation: 4,
+        child: InkWell(
+          onTap: () {
+            setState(() {
+              _inputMode = isTypeOnly ? InputMode.typeAndTouch : InputMode.typeOnly;
+            });
+            _inputMethodService?.setInputMode(_inputMode);
+            if (_inputMode == InputMode.typeOnly) {
+              _textFieldFocus.requestFocus();
+            }
+          },
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Icon(
+              isTypeOnly ? Icons.keyboard_command_key : Icons.touch_app,
+              size: 32,
+              color: isTypeOnly ? Colors.white : Colors.grey[700],
+            ),
+          ),
+        ),
       ),
     );
   }
