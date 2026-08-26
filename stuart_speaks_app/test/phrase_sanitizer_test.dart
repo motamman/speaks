@@ -68,6 +68,14 @@ void main() {
       expect(PhraseSanitizer.recover(phrase), phrase);
     });
 
+    test('keeps a wrapped phrase containing "{id:" as normal text', () {
+      expect(
+        PhraseSanitizer.recover(
+            '{id: 77777777-7777-7777-7777-777777777777, text: the log said {id: x} failed}'),
+        'the log said {id: x} failed',
+      );
+    });
+
     test('drops a record with empty text', () {
       expect(
         PhraseSanitizer.recover(

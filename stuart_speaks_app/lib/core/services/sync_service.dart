@@ -182,18 +182,28 @@ class SyncService {
         }
       }
 
-      // Sanitize local phrases the same way before merging
-      final sanitizedLocal = <Phrase>[];
-      final seenLocal = <String>{};
+      // Sanitize local phrases the same way before merging. Phrases that
+      // collapse to the same text after recovery are merged, not dropped:
+      // usage counts are summed, the newest lastModified wins, and the first
+      // non-null category is kept.
+      final localByText = <String, Phrase>{};
       for (final phrase in localPhrases) {
         final text = PhraseSanitizer.recover(phrase.text);
         if (text == null) continue;
-        if (seenLocal.add(text)) {
-          sanitizedLocal.add(
-            text == phrase.text ? phrase : phrase.copyWith(text: text),
+        final existing = localByText[text];
+        if (existing == null) {
+          localByText[text] =
+              text == phrase.text ? phrase : phrase.copyWith(text: text);
+        } else {
+          localByText[text] = Phrase(
+            text: text,
+            category: existing.category ?? phrase.category,
+            usageCount: existing.usageCount + phrase.usageCount,
+            lastModified: _laterOf(existing.lastModified, phrase.lastModified),
           );
         }
       }
+      final sanitizedLocal = localByText.values.toList();
 
       // Merge and resolve conflicts
       final mergeResult = _mergePhraseLists(sanitizedLocal, remotePhrases);
@@ -215,6 +225,12 @@ class SyncService {
       _setStatus(SyncStatus.error);
       return SyncResult.error('Sync failed: $e');
     }
+  }
+
+  static DateTime? _laterOf(DateTime? a, DateTime? b) {
+    if (a == null) return b;
+    if (b == null) return a;
+    return b.isAfter(a) ? b : a;
   }
 
   /// Merge local and remote phrase lists

@@ -26,7 +26,7 @@ class PhraseSanitizer {
       current = match.group(1)!.trim();
       match = _wrapper.firstMatch(current);
     }
-    if (current.isEmpty || current.contains('{id:')) return null;
+    if (current.isEmpty || current.startsWith('{id:')) return null;
     return current;
   }
 
