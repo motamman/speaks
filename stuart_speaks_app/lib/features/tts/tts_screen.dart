@@ -6,7 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:share_plus/share_plus.dart' show Share, XFile;
+import 'package:share_plus/share_plus.dart' show SharePlus, ShareParams, XFile;
 import 'package:path_provider/path_provider.dart';
 
 import '../../core/models/tts_request.dart';
@@ -1073,12 +1073,12 @@ class _TTSScreenState extends State<TTSScreen> {
           ? box.localToGlobal(Offset.zero) & box.size
           : null;
 
-      await Share.shareXFiles(
-        [xFile],
+      await SharePlus.instance.share(ShareParams(
+        files: [xFile],
         subject: 'Audio from ${_profileService?.getAppTitle() ?? "Speaks"}',
         text: item.text,
         sharePositionOrigin: sharePositionOrigin,
-      );
+      ));
     } catch (e) {
       _showError('Failed to share audio: ${e.toString()}');
     }

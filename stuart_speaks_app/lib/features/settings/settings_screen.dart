@@ -4,7 +4,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:share_plus/share_plus.dart' show Share, XFile, ShareResultStatus;
+import 'package:share_plus/share_plus.dart'
+    show SharePlus, ShareParams, XFile, ShareResultStatus;
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -254,16 +255,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _importProviderConfig() async {
     try {
       // Pick file
-      final result = await FilePicker.platform.pickFiles(
+      final picked = await FilePicker.pickFile(
         type: FileType.custom,
         allowedExtensions: ['speakjson', 'json'],
       );
 
-      if (result == null || result.files.isEmpty) {
+      if (picked == null) {
         return; // User canceled
       }
 
-      final file = File(result.files.single.path!);
+      final file = File(picked.path!);
       final jsonContent = await file.readAsString();
 
       // Parse template
@@ -443,12 +444,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ? box.localToGlobal(Offset.zero) & box.size
           : null;
 
-      final result = await Share.shareXFiles(
-        [xFile],
+      final result = await SharePlus.instance.share(ShareParams(
+        files: [xFile],
         subject: '${provider.name} TTS Provider Configuration',
         text: 'Import this configuration in Stuart Speaks to add the ${provider.name} provider.',
         sharePositionOrigin: sharePositionOrigin,
-      );
+      ));
 
       if (result.status == ShareResultStatus.success && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
