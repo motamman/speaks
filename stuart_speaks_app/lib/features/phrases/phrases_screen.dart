@@ -20,6 +20,7 @@ import '../../core/services/api_client.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/config/server_config.dart';
 import '../../core/utils/input_validator.dart';
+import '../../core/utils/phrase_sanitizer.dart';
 import '../../core/constants/accessibility_constants.dart';
 import '../../core/providers/tts_provider.dart';
 
@@ -83,22 +84,31 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
         );
       }
 
-      // Load cached audio from persistent storage
+      // Load custom phrases (user-added, not from defaults), repairing any
+      // entries corrupted by the old sync bug (stringified "{id: ..., text:
+      // ...}" records) before anything else reads them
+      final customPhrasesJson = prefs.getString('custom_phrases');
+      List<String> customPhrases = [];
+
+      if (customPhrasesJson != null) {
+        final List<dynamic> customList = jsonDecode(customPhrasesJson);
+        final repair =
+            PhraseSanitizer.repairAll(customList.map((e) => e.toString()));
+        customPhrases = repair.phrases;
+        if (repair.changed) {
+          await prefs.setString('custom_phrases', jsonEncode(customPhrases));
+          await _migrateRepairedPhraseData(prefs, repair);
+        }
+      }
+
+      // Load cached audio from persistent storage (after repair, so entries
+      // are keyed by the repaired phrase text)
       await _loadAudioCache();
 
       // Load default phrases from assets
       final String jsonString = await rootBundle.loadString('assets/default_phrases.json');
       final List<dynamic> defaultList = jsonDecode(jsonString);
       final defaultPhrases = defaultList.map((e) => e.toString()).toList();
-
-      // Load custom phrases (user-added, not from defaults)
-      final customPhrasesJson = prefs.getString('custom_phrases');
-      List<String> customPhrases = [];
-
-      if (customPhrasesJson != null) {
-        final List<dynamic> customList = jsonDecode(customPhrasesJson);
-        customPhrases = customList.map((e) => e.toString()).toList();
-      }
 
       // Combine both lists, filtering out excluded phrases
       final allPhrases = <String>[];
@@ -110,8 +120,12 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
         }
       }
 
-      // Add custom phrases
-      allPhrases.addAll(customPhrases);
+      // Add custom phrases, skipping any that duplicate a default
+      for (final phrase in customPhrases) {
+        if (!allPhrases.contains(phrase)) {
+          allPhrases.add(phrase);
+        }
+      }
 
       // Load usage counts from preferences
       final usageJson = prefs.getString('phrase_usage');
@@ -158,6 +172,57 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
         .toList();
 
     await prefs.setString('custom_phrases', jsonEncode(customPhrases));
+  }
+
+  /// After repairing corrupted phrase text, move usage counts and cached
+  /// audio stored under the old text to the repaired text, and drop entries
+  /// for phrases that were removed entirely.
+  Future<void> _migrateRepairedPhraseData(
+    SharedPreferences prefs,
+    PhraseRepairResult repair,
+  ) async {
+    // Usage counts
+    final usageJson = prefs.getString('phrase_usage');
+    if (usageJson != null) {
+      final Map<String, dynamic> raw = jsonDecode(usageJson);
+      final usage = raw.map((key, value) => MapEntry(key, (value as num).toInt()));
+      var usageChanged = false;
+      void moveCount(String from, String? to) {
+        final count = usage.remove(from);
+        if (count == null) return;
+        usageChanged = true;
+        if (to != null) {
+          usage[to] = (usage[to] ?? 0) + count;
+        }
+      }
+
+      repair.renamed.forEach(moveCount);
+      for (final old in repair.removed) {
+        // A removed duplicate folds its count into the surviving phrase
+        moveCount(old, PhraseSanitizer.recover(old));
+      }
+      if (usageChanged) {
+        await prefs.setString('phrase_usage', jsonEncode(usage));
+      }
+    }
+
+    // Cached audio
+    Future<void> moveAudio(String from, String? to) async {
+      final fromKey = 'phrase_audio_$from';
+      final audio = prefs.getString(fromKey);
+      if (audio == null) return;
+      if (to != null && prefs.getString('phrase_audio_$to') == null) {
+        await prefs.setString('phrase_audio_$to', audio);
+      }
+      await prefs.remove(fromKey);
+    }
+
+    for (final entry in repair.renamed.entries) {
+      await moveAudio(entry.key, entry.value);
+    }
+    for (final old in repair.removed) {
+      await moveAudio(old, PhraseSanitizer.recover(old));
+    }
   }
 
   /// Load audio cache from persistent storage
@@ -231,17 +296,18 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
 
     final isDefault = defaultPhrases.contains(phrase.text);
 
+    setState(() {
+      _phrases.remove(phrase);
+    });
+
     if (isDefault) {
       // Exclude default phrase (hide it)
       await _exclusionTracker?.exclude(phrase.text);
     } else {
-      // Actually delete custom phrase
+      // Actually delete custom phrase (must run after the removal above so
+      // the deleted phrase isn't written back to storage)
       await _savePhrases();
     }
-
-    setState(() {
-      _phrases.remove(phrase);
-    });
 
     // Delete from server if sync is available
     if (_syncService != null && _syncService!.canSync) {

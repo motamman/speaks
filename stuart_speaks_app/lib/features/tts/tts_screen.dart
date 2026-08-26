@@ -26,6 +26,7 @@ import '../../core/services/api_client.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/config/server_config.dart';
 import '../../core/utils/input_validator.dart';
+import '../../core/utils/phrase_sanitizer.dart';
 import '../../core/constants/accessibility_constants.dart';
 import '../../core/providers/tts_provider.dart';
 import '../input/word_wheel/word_wheel_widget_v2.dart';
@@ -996,7 +997,11 @@ class _TTSScreenState extends State<TTSScreen> {
 
     if (customPhrasesJson != null) {
       final List<dynamic> existingPhrases = jsonDecode(customPhrasesJson);
-      phrases = existingPhrases.map((e) => e.toString()).toList();
+      // Repair entries corrupted by the old sync bug so they aren't kept or
+      // spread by this write path
+      phrases = PhraseSanitizer.repairAll(
+        existingPhrases.map((e) => e.toString()),
+      ).phrases;
     }
 
     // Check if already exists
