@@ -44,7 +44,9 @@ dependencies:
 
   # Storage & Persistence
   shared_preferences: ^2.5.5
-  flutter_secure_storage: ^11.0.0
+  # Stay on v10 until all installs have run it once: v10 migrates data written
+  # by v9's ciphers, and v11 removes those migration paths entirely.
+  flutter_secure_storage: ^10.0.0
   path_provider: ^2.1.5
 
   # Utilities

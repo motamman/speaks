@@ -264,8 +264,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return; // User canceled
       }
 
-      final file = File(picked.path!);
-      final jsonContent = await file.readAsString();
+      final jsonContent = utf8.decode(await picked.readAsBytes());
 
       // Parse template
       final template = ProviderTemplate.fromSpeakJson(jsonContent);
