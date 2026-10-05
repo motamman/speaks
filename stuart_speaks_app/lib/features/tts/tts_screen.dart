@@ -1234,9 +1234,13 @@ class _TTSScreenState extends State<TTSScreen> {
                 }
               }
             },
-            child: isTablet
-                ? (isLandscape ? _buildTabletLandscapeLayout() : _buildTabletPortraitLayout())
-                : _buildPhoneLayout(),
+            child: LayoutBuilder(
+              builder: (context, constraints) => isTablet
+                  ? (isLandscape
+                      ? _buildTabletLandscapeLayout(constraints.maxHeight)
+                      : _buildTabletPortraitLayout(constraints.maxHeight))
+                  : _buildPhoneLayout(constraints.maxHeight),
+            ),
           ),
         ),
       ),
@@ -1278,12 +1282,12 @@ class _TTSScreenState extends State<TTSScreen> {
   }
 
   /// Phone layout - vertical stack (current layout)
-  Widget _buildPhoneLayout() {
+  Widget _buildPhoneLayout(double bodyHeight) {
     // For spinner keyboard: full-width spinner with collapsible history overlay
     if (_inputMethod == InputMethod.spinnerKeyboard) {
       return Column(
         children: [
-          _buildInputArea(),
+          _buildPortraitInputArea(bodyHeight),
           Expanded(
             child: Stack(
               children: [
@@ -1311,7 +1315,7 @@ class _TTSScreenState extends State<TTSScreen> {
 
     // Type-only mode: no word wheel, history fills the freed space
     if (_inputMode == InputMode.typeOnly) {
-      return _buildTypeOnlyLayout();
+      return _buildTypeOnlyLayout(bodyHeight);
     }
 
     // For word wheel: original flex layout
@@ -1325,7 +1329,7 @@ class _TTSScreenState extends State<TTSScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Text input area
-              _buildInputArea(),
+              _buildPortraitInputArea(bodyHeight),
 
               // Word wheel - fills remaining space
               Expanded(
@@ -1355,11 +1359,11 @@ class _TTSScreenState extends State<TTSScreen> {
 
   /// Type-only mode layout (phone and tablet portrait): input area on top,
   /// recent phrases fill the space the word wheel would have used
-  Widget _buildTypeOnlyLayout() {
+  Widget _buildTypeOnlyLayout(double bodyHeight) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildInputArea(),
+        _buildPortraitInputArea(bodyHeight),
         Expanded(
           child: SizedBox(
             width: double.infinity,
@@ -1375,12 +1379,12 @@ class _TTSScreenState extends State<TTSScreen> {
   }
 
   /// Tablet portrait layout - 2/3 top (text entry + wheel), 1/3 bottom (recent phrases)
-  Widget _buildTabletPortraitLayout() {
+  Widget _buildTabletPortraitLayout(double bodyHeight) {
     // For spinner keyboard: full-width spinner with collapsible history overlay
     if (_inputMethod == InputMethod.spinnerKeyboard) {
       return Column(
         children: [
-          _buildInputArea(),
+          _buildPortraitInputArea(bodyHeight),
           Expanded(
             child: Stack(
               children: [
@@ -1408,7 +1412,7 @@ class _TTSScreenState extends State<TTSScreen> {
 
     // Type-only mode: no word wheel, history fills the freed space
     if (_inputMode == InputMode.typeOnly) {
-      return _buildTypeOnlyLayout();
+      return _buildTypeOnlyLayout(bodyHeight);
     }
 
     return Column(
@@ -1421,7 +1425,7 @@ class _TTSScreenState extends State<TTSScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Text input area
-              _buildInputArea(),
+              _buildPortraitInputArea(bodyHeight),
 
               // Word wheel - fills remaining space
               Expanded(
@@ -1450,12 +1454,12 @@ class _TTSScreenState extends State<TTSScreen> {
   }
 
   /// Tablet landscape layout - 2/3 top (input full width), 1/3 bottom (wheel left, phrases right)
-  Widget _buildTabletLandscapeLayout() {
+  Widget _buildTabletLandscapeLayout(double bodyHeight) {
     // For spinner keyboard: full-width spinner with collapsible history overlay
     if (_inputMethod == InputMethod.spinnerKeyboard) {
       return Column(
         children: [
-          _buildInputArea(isLandscape: true),
+          _buildPortraitInputArea(bodyHeight),
           Expanded(
             child: Stack(
               children: [
@@ -1524,11 +1528,24 @@ class _TTSScreenState extends State<TTSScreen> {
           );
           final phrasesHeight = spaceAboveKeyboard - inputHeight;
 
+          // Too little room for the expanding text box, or for an inline
+          // error on top of a shrunk one: use the compact input area, which
+          // scrolls instead of overflowing.
+          final tooTight =
+              inputHeight < _landscapeInputChromeHeight + _minLandscapeTextBoxHeight ||
+                  (_errorMessage != null &&
+                      inputHeight < availableHeight / 3 + _landscapeInputChromeHeight);
+
           return Column(
             children: [
               SizedBox(
                 height: inputHeight,
-                child: _buildInputArea(isLandscape: true),
+                child: tooTight
+                    ? Align(
+                        alignment: Alignment.topCenter,
+                        child: _scrollableInputArea(inputHeight),
+                      )
+                    : _buildInputArea(isLandscape: true),
               ),
               if (phrasesHeight > 0)
                 SizedBox(height: phrasesHeight, child: bottomSection),
@@ -1569,6 +1586,31 @@ class _TTSScreenState extends State<TTSScreen> {
     const spacing = 16.0;
     const speakRow = 70.0;
     return padding + suggestionsMargin + suggestionsHeight + spacing + speakRow;
+  }
+
+  /// Smallest useful height for the expanding landscape text box
+  static const double _minLandscapeTextBoxHeight = 60.0;
+
+  /// Input area for portrait layouts, where it sits at the top of the body.
+  /// The scaffold never resizes, so with an on-screen keyboard open it is
+  /// capped to the space above the keyboard.
+  Widget _buildPortraitInputArea(double bodyHeight) {
+    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+    if (keyboardHeight <= 0) return _buildInputArea();
+    return _scrollableInputArea(max(0.0, bodyHeight - keyboardHeight));
+  }
+
+  /// Compact input area capped at [maxHeight]. When it doesn't fit it
+  /// scrolls, anchored at the bottom so SPEAK NOW and any inline error stay
+  /// visible.
+  Widget _scrollableInputArea(double maxHeight) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: maxHeight),
+      child: SingleChildScrollView(
+        reverse: true,
+        child: _buildInputArea(),
+      ),
+    );
   }
 
   /// Build input area with text field, suggestions, and speak button
