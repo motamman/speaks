@@ -6,7 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:share_plus/share_plus.dart' show Share, XFile;
+import 'package:share_plus/share_plus.dart' show SharePlus, ShareParams, XFile;
 import 'package:path_provider/path_provider.dart';
 
 import '../../core/models/tts_request.dart';
@@ -26,6 +26,7 @@ import '../../core/services/api_client.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/config/server_config.dart';
 import '../../core/utils/input_validator.dart';
+import '../../core/utils/phrase_storage_repair.dart';
 import '../../core/constants/accessibility_constants.dart';
 import '../../core/providers/tts_provider.dart';
 import '../input/word_wheel/word_wheel_widget_v2.dart';
@@ -71,6 +72,12 @@ class _TTSScreenState extends State<TTSScreen> {
   late final SentenceInputFormatter _sentenceFormatter;
   DateTime _lastEnterSubmit = DateTime.fromMillisecondsSinceEpoch(0);
   bool _historyExpanded = false;
+  // Errors show inline above SPEAK NOW: a snackbar would sit behind the
+  // keyboard because the scaffold never resizes. Cleared by editing the text,
+  // the next speak attempt, or the dismiss button.
+  String? _errorTitle;
+  String? _errorMessage;
+  String _textAtError = '';
   static const int _maxHistoryItems = 10;
   static final Map<LogicalKeyboardKey, int> _fKeyIndex = {
     LogicalKeyboardKey.f1: 0,
@@ -263,6 +270,11 @@ class _TTSScreenState extends State<TTSScreen> {
   }
 
   void _onTextChanged() {
+    // Editing the text (not just moving the cursor) dismisses the error
+    if (_errorMessage != null && _textController.text != _textAtError) {
+      _clearError();
+    }
+
     final tracker = _usageTracker;
     if (tracker == null) return;
 
@@ -611,6 +623,7 @@ class _TTSScreenState extends State<TTSScreen> {
   }
 
   Future<void> _onSpeak() async {
+    _clearError();
     final text = _textController.text.trim();
 
     // Validate input
@@ -669,12 +682,12 @@ class _TTSScreenState extends State<TTSScreen> {
     } on TTSProviderException catch (e, stackTrace) {
       _logger.error('TTS Provider Error', error: e, stackTrace: stackTrace);
       if (mounted) {
-        _errorHandler.showErrorSnackbar(context, e, stackTrace: stackTrace);
+        _showFriendlyError(e, stackTrace);
       }
     } catch (e, stackTrace) {
       _logger.error('Unexpected error during speech', error: e, stackTrace: stackTrace);
       if (mounted) {
-        _errorHandler.showErrorSnackbar(context, e, stackTrace: stackTrace);
+        _showFriendlyError(e, stackTrace);
       }
     } finally {
       if (mounted) {
@@ -858,16 +871,27 @@ class _TTSScreenState extends State<TTSScreen> {
     }
   }
 
-  void _showError(String message) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 4),
-        ),
-      );
-    }
+  void _showError(String message, {String? title}) {
+    if (!mounted) return;
+    setState(() {
+      _errorTitle = title;
+      _errorMessage = message;
+      _textAtError = _textController.text;
+    });
+  }
+
+  /// Show an exception as a user-friendly inline error
+  void _showFriendlyError(Object error, StackTrace stackTrace) {
+    final friendly = _errorHandler.handleError(error, stackTrace: stackTrace);
+    _showError(friendly.message, title: friendly.title);
+  }
+
+  void _clearError() {
+    if (_errorMessage == null || !mounted) return;
+    setState(() {
+      _errorTitle = null;
+      _errorMessage = null;
+    });
   }
 
   /// Add item to speech history
@@ -918,7 +942,7 @@ class _TTSScreenState extends State<TTSScreen> {
     } catch (e, stackTrace) {
       _logger.error('Error playing cached audio', error: e, stackTrace: stackTrace);
       if (mounted) {
-        _errorHandler.showErrorSnackbar(context, e, stackTrace: stackTrace);
+        _showFriendlyError(e, stackTrace);
       }
     } finally {
       if (mounted) {
@@ -991,13 +1015,9 @@ class _TTSScreenState extends State<TTSScreen> {
   /// Add text to quick phrases
   Future<void> _addToQuickPhrases(String text, {Uint8List? cachedAudio}) async {
     final prefs = await SharedPreferences.getInstance();
-    final customPhrasesJson = prefs.getString('custom_phrases');
-    List<String> phrases = [];
-
-    if (customPhrasesJson != null) {
-      final List<dynamic> existingPhrases = jsonDecode(customPhrasesJson);
-      phrases = existingPhrases.map((e) => e.toString()).toList();
-    }
+    // Repair entries corrupted by the old sync bug so they aren't kept or
+    // spread by this write path, migrating their usage counts and audio
+    final phrases = await repairStoredCustomPhrases(prefs);
 
     // Check if already exists
     if (phrases.contains(text)) {
@@ -1068,12 +1088,12 @@ class _TTSScreenState extends State<TTSScreen> {
           ? box.localToGlobal(Offset.zero) & box.size
           : null;
 
-      await Share.shareXFiles(
-        [xFile],
+      await SharePlus.instance.share(ShareParams(
+        files: [xFile],
         subject: 'Audio from ${_profileService?.getAppTitle() ?? "Speaks"}',
         text: item.text,
         sharePositionOrigin: sharePositionOrigin,
-      );
+      ));
     } catch (e) {
       _showError('Failed to share audio: ${e.toString()}');
     }
@@ -1214,9 +1234,13 @@ class _TTSScreenState extends State<TTSScreen> {
                 }
               }
             },
-            child: isTablet
-                ? (isLandscape ? _buildTabletLandscapeLayout() : _buildTabletPortraitLayout())
-                : _buildPhoneLayout(),
+            child: LayoutBuilder(
+              builder: (context, constraints) => isTablet
+                  ? (isLandscape
+                      ? _buildTabletLandscapeLayout(constraints.maxHeight)
+                      : _buildTabletPortraitLayout(constraints.maxHeight))
+                  : _buildPhoneLayout(constraints.maxHeight),
+            ),
           ),
         ),
       ),
@@ -1258,12 +1282,12 @@ class _TTSScreenState extends State<TTSScreen> {
   }
 
   /// Phone layout - vertical stack (current layout)
-  Widget _buildPhoneLayout() {
+  Widget _buildPhoneLayout(double bodyHeight) {
     // For spinner keyboard: full-width spinner with collapsible history overlay
     if (_inputMethod == InputMethod.spinnerKeyboard) {
       return Column(
         children: [
-          _buildInputArea(),
+          _buildPortraitInputArea(bodyHeight),
           Expanded(
             child: Stack(
               children: [
@@ -1291,7 +1315,7 @@ class _TTSScreenState extends State<TTSScreen> {
 
     // Type-only mode: no word wheel, history fills the freed space
     if (_inputMode == InputMode.typeOnly) {
-      return _buildTypeOnlyLayout();
+      return _buildTypeOnlyLayout(bodyHeight);
     }
 
     // For word wheel: original flex layout
@@ -1305,7 +1329,7 @@ class _TTSScreenState extends State<TTSScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Text input area
-              _buildInputArea(),
+              _buildPortraitInputArea(bodyHeight),
 
               // Word wheel - fills remaining space
               Expanded(
@@ -1335,11 +1359,11 @@ class _TTSScreenState extends State<TTSScreen> {
 
   /// Type-only mode layout (phone and tablet portrait): input area on top,
   /// recent phrases fill the space the word wheel would have used
-  Widget _buildTypeOnlyLayout() {
+  Widget _buildTypeOnlyLayout(double bodyHeight) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildInputArea(),
+        _buildPortraitInputArea(bodyHeight),
         Expanded(
           child: SizedBox(
             width: double.infinity,
@@ -1355,12 +1379,12 @@ class _TTSScreenState extends State<TTSScreen> {
   }
 
   /// Tablet portrait layout - 2/3 top (text entry + wheel), 1/3 bottom (recent phrases)
-  Widget _buildTabletPortraitLayout() {
+  Widget _buildTabletPortraitLayout(double bodyHeight) {
     // For spinner keyboard: full-width spinner with collapsible history overlay
     if (_inputMethod == InputMethod.spinnerKeyboard) {
       return Column(
         children: [
-          _buildInputArea(),
+          _buildPortraitInputArea(bodyHeight),
           Expanded(
             child: Stack(
               children: [
@@ -1388,7 +1412,7 @@ class _TTSScreenState extends State<TTSScreen> {
 
     // Type-only mode: no word wheel, history fills the freed space
     if (_inputMode == InputMode.typeOnly) {
-      return _buildTypeOnlyLayout();
+      return _buildTypeOnlyLayout(bodyHeight);
     }
 
     return Column(
@@ -1401,7 +1425,7 @@ class _TTSScreenState extends State<TTSScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Text input area
-              _buildInputArea(),
+              _buildPortraitInputArea(bodyHeight),
 
               // Word wheel - fills remaining space
               Expanded(
@@ -1430,12 +1454,12 @@ class _TTSScreenState extends State<TTSScreen> {
   }
 
   /// Tablet landscape layout - 2/3 top (input full width), 1/3 bottom (wheel left, phrases right)
-  Widget _buildTabletLandscapeLayout() {
+  Widget _buildTabletLandscapeLayout(double bodyHeight) {
     // For spinner keyboard: full-width spinner with collapsible history overlay
     if (_inputMethod == InputMethod.spinnerKeyboard) {
       return Column(
         children: [
-          _buildInputArea(isLandscape: true),
+          _buildPortraitInputArea(bodyHeight),
           Expanded(
             child: Stack(
               children: [
@@ -1464,56 +1488,128 @@ class _TTSScreenState extends State<TTSScreen> {
     final mediaQuery = MediaQuery.of(context);
     final keyboardHeight = mediaQuery.viewInsets.bottom;
 
+    // Wheel and phrases, shown below the input area
+    final bottomSection = Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Word wheel (left half) - centered in quadrant; hidden in
+        // type-only mode so phrases take the full width
+        if (_inputMode != InputMode.typeOnly)
+          Expanded(
+            child: Center(child: _buildWordWheel()),
+          ),
+
+        // Phrases list - flush left and top
+        Expanded(
+          child: Align(
+            alignment: Alignment.topLeft,
+            child: SingleChildScrollView(
+              child: _buildPhrasesList(),
+            ),
+          ),
+        ),
+      ],
+    );
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final availableHeight = constraints.maxHeight;
-        final bottomSectionHeight = availableHeight * 0.33; // Fixed 1/3 of available space
-        final topSectionHeight = keyboardHeight > 0
-            ? availableHeight - keyboardHeight // With keyboard: fill space above keyboard
-            : availableHeight * 0.67; // No keyboard: take 2/3
 
+        if (keyboardHeight > 0) {
+          // With a keyboard the text box is capped at 1/3 of the screen;
+          // suggestions and SPEAK NOW sit below it and the phrases fill the
+          // rest down to the keyboard. A full on-screen keyboard leaves less
+          // room than that, so the input area takes all the space above it
+          // (text box shrinks) and the phrases are hidden.
+          final spaceAboveKeyboard = max(0.0, availableHeight - keyboardHeight);
+          final inputHeight = min(
+            spaceAboveKeyboard,
+            availableHeight / 3 + _landscapeInputChromeHeight,
+          );
+          final phrasesHeight = spaceAboveKeyboard - inputHeight;
+
+          // Too little room for the expanding text box, or for an inline
+          // error on top of a shrunk one: use the compact input area, which
+          // scrolls instead of overflowing.
+          final tooTight =
+              inputHeight < _landscapeInputChromeHeight + _minLandscapeTextBoxHeight ||
+                  (_errorMessage != null &&
+                      inputHeight < availableHeight / 3 + _landscapeInputChromeHeight);
+
+          return Column(
+            children: [
+              SizedBox(
+                height: inputHeight,
+                child: tooTight
+                    ? Align(
+                        alignment: Alignment.topCenter,
+                        child: _scrollableInputArea(inputHeight),
+                      )
+                    : _buildInputArea(isLandscape: true),
+              ),
+              if (phrasesHeight > 0)
+                SizedBox(height: phrasesHeight, child: bottomSection),
+            ],
+          );
+        }
+
+        // No keyboard: input area takes the top 2/3, phrases the bottom 1/3
         return Stack(
           children: [
-            // Top - Input area (shrinks when keyboard appears, stays visible)
             Positioned(
               top: 0,
               left: 0,
               right: 0,
-              height: topSectionHeight,
+              height: availableHeight * 0.67,
               child: _buildInputArea(isLandscape: true),
             ),
-
-            // Bottom - Wheel and Phrases (fixed at bottom, gets covered by keyboard)
             Positioned(
               bottom: 0,
               left: 0,
               right: 0,
-              height: bottomSectionHeight,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Word wheel (left half) - centered in quadrant; hidden in
-                  // type-only mode so phrases take the full width
-                  if (_inputMode != InputMode.typeOnly)
-                    Expanded(
-                      child: Center(child: _buildWordWheel()),
-                    ),
-
-                  // Phrases list - flush left and top
-                  Expanded(
-                    child: Align(
-                      alignment: Alignment.topLeft,
-                      child: SingleChildScrollView(
-                        child: _buildPhrasesList(),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+              height: availableHeight * 0.33,
+              child: bottomSection,
             ),
           ],
         );
       },
+    );
+  }
+
+  /// Height of everything in the landscape input area except the text box:
+  /// padding, suggestions bar, spacing and the SPEAK NOW row. Keep in sync
+  /// with [_buildInputArea]. An inline error takes its space from the text box.
+  double get _landscapeInputChromeHeight {
+    const padding = 16.0 * 2;
+    const suggestionsMargin = 8.0;
+    final suggestionsHeight = _inputMode == InputMode.typeOnly ? 110.0 : 50.0;
+    const spacing = 16.0;
+    const speakRow = 70.0;
+    return padding + suggestionsMargin + suggestionsHeight + spacing + speakRow;
+  }
+
+  /// Smallest useful height for the expanding landscape text box
+  static const double _minLandscapeTextBoxHeight = 60.0;
+
+  /// Input area for portrait layouts, where it sits at the top of the body.
+  /// The scaffold never resizes, so with an on-screen keyboard open it is
+  /// capped to the space above the keyboard.
+  Widget _buildPortraitInputArea(double bodyHeight) {
+    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+    if (keyboardHeight <= 0) return _buildInputArea();
+    return _scrollableInputArea(max(0.0, bodyHeight - keyboardHeight));
+  }
+
+  /// Compact input area capped at [maxHeight]. When it doesn't fit it
+  /// scrolls, anchored at the bottom so SPEAK NOW and any inline error stay
+  /// visible.
+  Widget _scrollableInputArea(double maxHeight) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: maxHeight),
+      child: SingleChildScrollView(
+        reverse: true,
+        child: _buildInputArea(),
+      ),
     );
   }
 
@@ -1620,16 +1716,19 @@ class _TTSScreenState extends State<TTSScreen> {
                 : const SizedBox.shrink(), // Empty space when no suggestions
           ),
 
-          const SizedBox(height: 16),
+          if (_errorMessage != null) ...[
+            const SizedBox(height: 8),
+            _buildInlineError(),
+            const SizedBox(height: 8),
+          ] else
+            const SizedBox(height: 16),
 
           // Speak button and keyboard toggle row
           Row(
             children: [
-              // Toggles on LEFT for left-handed users
+              // Toggle on LEFT for left-handed users
               if (_inputMethodService?.isLeftHanded() ?? false) ...[
                 _buildInputModeToggle(),
-                const SizedBox(width: 12),
-                _buildKeyboardToggle(),
                 const SizedBox(width: 12),
               ],
               // Speak button
@@ -1668,16 +1767,73 @@ class _TTSScreenState extends State<TTSScreen> {
                   ),
                 ),
               ),
-              // Toggles on RIGHT for right-handed users
+              // Toggle on RIGHT for right-handed users
               if (!(_inputMethodService?.isLeftHanded() ?? false)) ...[
-                const SizedBox(width: 12),
-                _buildKeyboardToggle(),
                 const SizedBox(width: 12),
                 _buildInputModeToggle(),
               ],
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  /// Error box above SPEAK NOW. Announced by screen readers when it appears.
+  Widget _buildInlineError() {
+    final title = _errorTitle;
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      child: Container(
+        padding: const EdgeInsets.only(left: 12),
+        decoration: BoxDecoration(
+          color: Colors.red[50],
+          border: Border.all(color: Colors.red[700]!, width: 2),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.error_outline, color: Colors.red[700], size: 28),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (title != null)
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.red[900],
+                        ),
+                      ),
+                    Text(
+                      _errorMessage!,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 18, color: Colors.red[900]),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            IconButton(
+              onPressed: _clearError,
+              icon: const Icon(Icons.close),
+              color: Colors.red[900],
+              tooltip: 'Dismiss',
+              constraints: const BoxConstraints(
+                minWidth: AccessibilityConstants.minTapTargetSize,
+                minHeight: AccessibilityConstants.minTapTargetSize,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1857,45 +2013,6 @@ class _TTSScreenState extends State<TTSScreen> {
               isTypeOnly ? Icons.keyboard_command_key : Icons.touch_app,
               size: 32,
               color: isTypeOnly ? Colors.white : Colors.grey[700],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Build keyboard toggle button
-  Widget _buildKeyboardToggle() {
-    return SizedBox(
-      height: 70,
-      child: Material(
-        color: _disableSystemKeyboard
-            ? const Color(0xFF2563EB)
-            : Colors.grey[200],
-        borderRadius: BorderRadius.circular(12),
-        elevation: 4,
-        child: InkWell(
-          onTap: () {
-            setState(() {
-              _disableSystemKeyboard = !_disableSystemKeyboard;
-            });
-            _inputMethodService?.setSystemKeyboardDisabled(_disableSystemKeyboard);
-            // Hide keyboard if disabling
-            if (_disableSystemKeyboard) {
-              FocusScope.of(context).unfocus();
-            }
-          },
-          borderRadius: BorderRadius.circular(12),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Icon(
-              _disableSystemKeyboard
-                  ? Icons.keyboard_hide
-                  : Icons.keyboard,
-              size: 32,
-              color: _disableSystemKeyboard
-                  ? Colors.white
-                  : Colors.grey[700],
             ),
           ),
         ),

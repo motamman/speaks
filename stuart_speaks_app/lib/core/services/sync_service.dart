@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../models/phrase.dart';
+import '../utils/phrase_sanitizer.dart';
 import 'api_client.dart';
 import 'auth_service.dart';
 
@@ -91,10 +92,17 @@ class SyncService {
     final response = await _apiClient.get('/api/phrases');
 
     if (response.isSuccess) {
-      // Backend returns { success: true, phrases: [...] }
+      // Backend returns { success: true, phrases: [...] } where items may be
+      // plain strings or {id, text} records depending on server version
       final map = response.jsonMap;
       if (map != null && map['phrases'] is List) {
-        final phrases = (map['phrases'] as List).map((e) => e.toString()).toList();
+        final phrases = <String>[];
+        for (final e in map['phrases'] as List) {
+          final text = (e is Map ? e['text']?.toString() : e?.toString())?.trim();
+          if (text != null && text.isNotEmpty) {
+            phrases.add(text);
+          }
+        }
         return phrases;
       }
     }
@@ -105,6 +113,8 @@ class SyncService {
   /// Push a new phrase to the server
   Future<bool> pushPhrase(String text) async {
     if (!canSync) return false;
+    // Never re-upload a stringified record from the old sync bug
+    if (PhraseSanitizer.isCorrupted(text)) return false;
 
     final response = await _apiClient.post(
       '/api/phrases',
@@ -136,14 +146,68 @@ class SyncService {
 
     try {
       // Fetch remote phrases
-      final remotePhrases = await fetchRemotePhrases();
-      if (remotePhrases == null) {
+      final remoteRaw = await fetchRemotePhrases();
+      if (remoteRaw == null) {
         _setStatus(SyncStatus.error);
         return SyncResult.error('Failed to fetch remote phrases');
       }
 
+      // Clean up damage from the old stringified-record bug: recover the real
+      // phrase from each corrupted server entry, then delete the garbage row
+      final remotePhrases = <String>[];
+      final corrupted = <String, String?>{}; // original -> recovered text
+      for (final text in remoteRaw) {
+        final recovered = PhraseSanitizer.recover(text);
+        if (recovered == text) {
+          if (!remotePhrases.contains(text)) {
+            remotePhrases.add(text);
+          }
+        } else {
+          corrupted[text] = recovered;
+        }
+      }
+      for (final entry in corrupted.entries) {
+        final recovered = entry.value;
+        // Only delete the corrupted row once its phrase is safe: either
+        // nothing was recoverable, the clean text already exists remotely, or
+        // the re-push succeeded. A failed push leaves the corrupted row in
+        // place for the next sync to retry, but the recovered text is still
+        // included in the merge result.
+        var preserved = recovered == null || remotePhrases.contains(recovered);
+        if (recovered != null && !preserved) {
+          preserved = await pushPhrase(recovered);
+          remotePhrases.add(recovered);
+        }
+        if (preserved) {
+          await deleteRemotePhrase(entry.key);
+        }
+      }
+
+      // Sanitize local phrases the same way before merging. Phrases that
+      // collapse to the same text after recovery are merged, not dropped:
+      // usage counts are summed, the newest lastModified wins, and the first
+      // non-null category is kept.
+      final localByText = <String, Phrase>{};
+      for (final phrase in localPhrases) {
+        final text = PhraseSanitizer.recover(phrase.text);
+        if (text == null) continue;
+        final existing = localByText[text];
+        if (existing == null) {
+          localByText[text] =
+              text == phrase.text ? phrase : phrase.copyWith(text: text);
+        } else {
+          localByText[text] = Phrase(
+            text: text,
+            category: existing.category ?? phrase.category,
+            usageCount: existing.usageCount + phrase.usageCount,
+            lastModified: _laterOf(existing.lastModified, phrase.lastModified),
+          );
+        }
+      }
+      final sanitizedLocal = localByText.values.toList();
+
       // Merge and resolve conflicts
-      final mergeResult = _mergePhraseLists(localPhrases, remotePhrases);
+      final mergeResult = _mergePhraseLists(sanitizedLocal, remotePhrases);
 
       // Push local-only phrases to server
       for (final phrase in mergeResult.toAdd) {
@@ -162,6 +226,12 @@ class SyncService {
       _setStatus(SyncStatus.error);
       return SyncResult.error('Sync failed: $e');
     }
+  }
+
+  static DateTime? _laterOf(DateTime? a, DateTime? b) {
+    if (a == null) return b;
+    if (b == null) return a;
+    return b.isAfter(a) ? b : a;
   }
 
   /// Merge local and remote phrase lists

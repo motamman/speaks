@@ -5,7 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:share_plus/share_plus.dart' show Share, XFile;
+import 'package:share_plus/share_plus.dart' show SharePlus, ShareParams, XFile;
 import 'package:path_provider/path_provider.dart';
 
 import '../../core/models/phrase.dart';
@@ -20,6 +20,7 @@ import '../../core/services/api_client.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/config/server_config.dart';
 import '../../core/utils/input_validator.dart';
+import '../../core/utils/phrase_storage_repair.dart';
 import '../../core/constants/accessibility_constants.dart';
 import '../../core/providers/tts_provider.dart';
 
@@ -83,22 +84,19 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
         );
       }
 
-      // Load cached audio from persistent storage
+      // Load custom phrases (user-added, not from defaults), repairing any
+      // entries corrupted by the old sync bug (stringified "{id: ..., text:
+      // ...}" records) before anything else reads them
+      final customPhrases = await repairStoredCustomPhrases(prefs);
+
+      // Load cached audio from persistent storage (after repair, so entries
+      // are keyed by the repaired phrase text)
       await _loadAudioCache();
 
       // Load default phrases from assets
       final String jsonString = await rootBundle.loadString('assets/default_phrases.json');
       final List<dynamic> defaultList = jsonDecode(jsonString);
       final defaultPhrases = defaultList.map((e) => e.toString()).toList();
-
-      // Load custom phrases (user-added, not from defaults)
-      final customPhrasesJson = prefs.getString('custom_phrases');
-      List<String> customPhrases = [];
-
-      if (customPhrasesJson != null) {
-        final List<dynamic> customList = jsonDecode(customPhrasesJson);
-        customPhrases = customList.map((e) => e.toString()).toList();
-      }
 
       // Combine both lists, filtering out excluded phrases
       final allPhrases = <String>[];
@@ -110,8 +108,12 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
         }
       }
 
-      // Add custom phrases
-      allPhrases.addAll(customPhrases);
+      // Add custom phrases, skipping any that duplicate a default
+      for (final phrase in customPhrases) {
+        if (!allPhrases.contains(phrase)) {
+          allPhrases.add(phrase);
+        }
+      }
 
       // Load usage counts from preferences
       final usageJson = prefs.getString('phrase_usage');
@@ -231,17 +233,18 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
 
     final isDefault = defaultPhrases.contains(phrase.text);
 
+    setState(() {
+      _phrases.remove(phrase);
+    });
+
     if (isDefault) {
       // Exclude default phrase (hide it)
       await _exclusionTracker?.exclude(phrase.text);
     } else {
-      // Actually delete custom phrase
+      // Actually delete custom phrase (must run after the removal above so
+      // the deleted phrase isn't written back to storage)
       await _savePhrases();
     }
-
-    setState(() {
-      _phrases.remove(phrase);
-    });
 
     // Delete from server if sync is available
     if (_syncService != null && _syncService!.canSync) {
@@ -484,12 +487,12 @@ class _PhrasesScreenState extends State<PhrasesScreen> {
           ? box.localToGlobal(Offset.zero) & box.size
           : null;
 
-      await Share.shareXFiles(
-        [xFile],
+      await SharePlus.instance.share(ShareParams(
+        files: [xFile],
         subject: 'Phrase from Speaks',
         text: phrase.text,
         sharePositionOrigin: sharePositionOrigin,
-      );
+      ));
     } catch (e) {
       _showError('Failed to share audio: ${e.toString()}');
     }

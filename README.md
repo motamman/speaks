@@ -2,8 +2,8 @@
 
 AAC (Augmentative and Alternative Communication) app designed for individuals with speech difficulties, particularly ALS patients with motor impairments.
 
-**Version:** 0.2.0+4
-**Platforms:** iOS 12.0+ / Android 5.0+
+**Version:** 0.3.5+12
+**Platforms:** iOS 15.0+ / Android 7.0+
 
 ---
 
@@ -20,6 +20,7 @@ Speaks provides AI-powered text-to-speech with intelligent word prediction and a
 **Key Features:**
 - 5 TTS providers with streaming audio
 - Predictive word wheel with usage learning
+- Hardware-keyboard mode: F1-F12 word picks, Enter to speak
 - Quick phrases with audio caching
 - Vocabulary management with file import
 - WCAG 2.1 AAA accessibility compliance
@@ -42,6 +43,12 @@ Speaks provides AI-powered text-to-speech with intelligent word prediction and a
 - Concurrent generation, sequential playback
 - Audio caching for instant replay
 - Formats: MP3, WAV, PCM, Opus, OGG, FLAC
+
+### Keyboard Modes
+
+- **Type only** (default): for hardware keyboards. F1-F12 select suggested words, Enter speaks, word wheel hidden
+- **Type and touch**: on-screen word wheel and scrolling suggestions; Enter still speaks
+- Switch in Settings → Input Method
 
 ### Word Prediction
 
@@ -275,13 +282,13 @@ lib/
 ```yaml
 flutter_sound: ^9.16.3             # Audio playback
 http: ^1.1.0                       # TTS API calls
-shared_preferences: ^2.2.2         # Local storage
-flutter_secure_storage: ^9.2.4     # Encrypted credentials
+shared_preferences: ^2.5.5         # Local storage
+flutter_secure_storage: ^10.0.0    # Encrypted credentials (stay on v10 until all installs migrate)
 path_provider: ^2.1.5              # File paths
 crypto: ^3.0.3                     # Encryption
 provider: ^6.1.1                   # State management
-share_plus: ^12.0.1                # Share audio
-file_picker: ^10.3.3               # Import vocabulary
+share_plus: ^13.3.0                # Share audio
+file_picker: ^12.1.1               # Import vocabulary
 ```
 
 ---

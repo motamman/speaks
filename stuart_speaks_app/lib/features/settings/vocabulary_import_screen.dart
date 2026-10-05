@@ -23,13 +23,12 @@ class _VocabularyImportScreenState extends State<VocabularyImportScreen> {
   Future<void> _importTextFile() async {
     try {
       // Pick file
-      final result = await FilePicker.platform.pickFiles(
+      final picked = await FilePicker.pickFile(
         type: FileType.custom,
         allowedExtensions: ['txt', 'text'],
-        allowMultiple: false,
       );
 
-      if (result == null || result.files.isEmpty) {
+      if (picked == null) {
         return; // User canceled
       }
 
@@ -38,7 +37,7 @@ class _VocabularyImportScreenState extends State<VocabularyImportScreen> {
         _lastImportStats = null;
       });
 
-      final file = File(result.files.single.path!);
+      final file = File(picked.path!);
 
       // Read raw text for position-aware import
       final rawText = await file.readAsString();

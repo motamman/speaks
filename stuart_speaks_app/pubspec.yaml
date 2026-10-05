@@ -16,11 +16,12 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 0.3.3+11
+version: 0.3.5+12
 
 
 environment:
-  sdk: ^3.9.2
+  sdk: ^3.10.0
+  flutter: ">=3.38.1"
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
@@ -43,8 +44,10 @@ dependencies:
   flutter_sound: ^9.16.3
 
   # Storage & Persistence
-  shared_preferences: ^2.2.2
-  flutter_secure_storage: ^9.2.4
+  shared_preferences: ^2.5.5
+  # Stay on v10 until all installs have run it once: v10 migrates data written
+  # by v9's ciphers, and v11 removes those migration paths entirely.
+  flutter_secure_storage: ^10.0.0
   path_provider: ^2.1.5
 
   # Utilities
@@ -53,10 +56,10 @@ dependencies:
 
   # State Management (optional - using provider)
   provider: ^6.1.1
-  share_plus: ^12.0.1
-  file_picker: ^10.3.3
+  share_plus: ^13.3.0
+  file_picker: ^12.1.1
   url_launcher: ^6.3.1
-  package_info_plus: ^8.1.2
+  package_info_plus: ^10.2.1
   connectivity_plus: ^6.0.0
 
 dev_dependencies:
