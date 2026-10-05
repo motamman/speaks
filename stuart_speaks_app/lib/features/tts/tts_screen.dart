@@ -72,6 +72,12 @@ class _TTSScreenState extends State<TTSScreen> {
   late final SentenceInputFormatter _sentenceFormatter;
   DateTime _lastEnterSubmit = DateTime.fromMillisecondsSinceEpoch(0);
   bool _historyExpanded = false;
+  // Errors show inline above SPEAK NOW: a snackbar would sit behind the
+  // keyboard because the scaffold never resizes. Cleared by editing the text,
+  // the next speak attempt, or the dismiss button.
+  String? _errorTitle;
+  String? _errorMessage;
+  String _textAtError = '';
   static const int _maxHistoryItems = 10;
   static final Map<LogicalKeyboardKey, int> _fKeyIndex = {
     LogicalKeyboardKey.f1: 0,
@@ -264,6 +270,11 @@ class _TTSScreenState extends State<TTSScreen> {
   }
 
   void _onTextChanged() {
+    // Editing the text (not just moving the cursor) dismisses the error
+    if (_errorMessage != null && _textController.text != _textAtError) {
+      _clearError();
+    }
+
     final tracker = _usageTracker;
     if (tracker == null) return;
 
@@ -612,6 +623,7 @@ class _TTSScreenState extends State<TTSScreen> {
   }
 
   Future<void> _onSpeak() async {
+    _clearError();
     final text = _textController.text.trim();
 
     // Validate input
@@ -670,12 +682,12 @@ class _TTSScreenState extends State<TTSScreen> {
     } on TTSProviderException catch (e, stackTrace) {
       _logger.error('TTS Provider Error', error: e, stackTrace: stackTrace);
       if (mounted) {
-        _errorHandler.showErrorSnackbar(context, e, stackTrace: stackTrace);
+        _showFriendlyError(e, stackTrace);
       }
     } catch (e, stackTrace) {
       _logger.error('Unexpected error during speech', error: e, stackTrace: stackTrace);
       if (mounted) {
-        _errorHandler.showErrorSnackbar(context, e, stackTrace: stackTrace);
+        _showFriendlyError(e, stackTrace);
       }
     } finally {
       if (mounted) {
@@ -859,16 +871,27 @@ class _TTSScreenState extends State<TTSScreen> {
     }
   }
 
-  void _showError(String message) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 4),
-        ),
-      );
-    }
+  void _showError(String message, {String? title}) {
+    if (!mounted) return;
+    setState(() {
+      _errorTitle = title;
+      _errorMessage = message;
+      _textAtError = _textController.text;
+    });
+  }
+
+  /// Show an exception as a user-friendly inline error
+  void _showFriendlyError(Object error, StackTrace stackTrace) {
+    final friendly = _errorHandler.handleError(error, stackTrace: stackTrace);
+    _showError(friendly.message, title: friendly.title);
+  }
+
+  void _clearError() {
+    if (_errorMessage == null || !mounted) return;
+    setState(() {
+      _errorTitle = null;
+      _errorMessage = null;
+    });
   }
 
   /// Add item to speech history
@@ -919,7 +942,7 @@ class _TTSScreenState extends State<TTSScreen> {
     } catch (e, stackTrace) {
       _logger.error('Error playing cached audio', error: e, stackTrace: stackTrace);
       if (mounted) {
-        _errorHandler.showErrorSnackbar(context, e, stackTrace: stackTrace);
+        _showFriendlyError(e, stackTrace);
       }
     } finally {
       if (mounted) {
@@ -1461,57 +1484,91 @@ class _TTSScreenState extends State<TTSScreen> {
     final mediaQuery = MediaQuery.of(context);
     final keyboardHeight = mediaQuery.viewInsets.bottom;
 
+    // Wheel and phrases, shown below the input area
+    final bottomSection = Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Word wheel (left half) - centered in quadrant; hidden in
+        // type-only mode so phrases take the full width
+        if (_inputMode != InputMode.typeOnly)
+          Expanded(
+            child: Center(child: _buildWordWheel()),
+          ),
+
+        // Phrases list - flush left and top
+        Expanded(
+          child: Align(
+            alignment: Alignment.topLeft,
+            child: SingleChildScrollView(
+              child: _buildPhrasesList(),
+            ),
+          ),
+        ),
+      ],
+    );
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final availableHeight = constraints.maxHeight;
-        final bottomSectionHeight = availableHeight * 0.33; // Fixed 1/3 of available space
-        final topSectionHeight = keyboardHeight > 0
-            ? availableHeight - keyboardHeight // With keyboard: fill space above keyboard
-            : availableHeight * 0.67; // No keyboard: take 2/3
 
+        if (keyboardHeight > 0) {
+          // With a keyboard the text box is capped at 1/3 of the screen;
+          // suggestions and SPEAK NOW sit below it and the phrases fill the
+          // rest down to the keyboard. A full on-screen keyboard leaves less
+          // room than that, so the input area takes all the space above it
+          // (text box shrinks) and the phrases are hidden.
+          final spaceAboveKeyboard = max(0.0, availableHeight - keyboardHeight);
+          final inputHeight = min(
+            spaceAboveKeyboard,
+            availableHeight / 3 + _landscapeInputChromeHeight,
+          );
+          final phrasesHeight = spaceAboveKeyboard - inputHeight;
+
+          return Column(
+            children: [
+              SizedBox(
+                height: inputHeight,
+                child: _buildInputArea(isLandscape: true),
+              ),
+              if (phrasesHeight > 0)
+                SizedBox(height: phrasesHeight, child: bottomSection),
+            ],
+          );
+        }
+
+        // No keyboard: input area takes the top 2/3, phrases the bottom 1/3
         return Stack(
           children: [
-            // Top - Input area (shrinks when keyboard appears, stays visible)
             Positioned(
               top: 0,
               left: 0,
               right: 0,
-              height: topSectionHeight,
+              height: availableHeight * 0.67,
               child: _buildInputArea(isLandscape: true),
             ),
-
-            // Bottom - Wheel and Phrases (fixed at bottom, gets covered by keyboard)
             Positioned(
               bottom: 0,
               left: 0,
               right: 0,
-              height: bottomSectionHeight,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Word wheel (left half) - centered in quadrant; hidden in
-                  // type-only mode so phrases take the full width
-                  if (_inputMode != InputMode.typeOnly)
-                    Expanded(
-                      child: Center(child: _buildWordWheel()),
-                    ),
-
-                  // Phrases list - flush left and top
-                  Expanded(
-                    child: Align(
-                      alignment: Alignment.topLeft,
-                      child: SingleChildScrollView(
-                        child: _buildPhrasesList(),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+              height: availableHeight * 0.33,
+              child: bottomSection,
             ),
           ],
         );
       },
     );
+  }
+
+  /// Height of everything in the landscape input area except the text box:
+  /// padding, suggestions bar, spacing and the SPEAK NOW row. Keep in sync
+  /// with [_buildInputArea]. An inline error takes its space from the text box.
+  double get _landscapeInputChromeHeight {
+    const padding = 16.0 * 2;
+    const suggestionsMargin = 8.0;
+    final suggestionsHeight = _inputMode == InputMode.typeOnly ? 110.0 : 50.0;
+    const spacing = 16.0;
+    const speakRow = 70.0;
+    return padding + suggestionsMargin + suggestionsHeight + spacing + speakRow;
   }
 
   /// Build input area with text field, suggestions, and speak button
@@ -1617,7 +1674,12 @@ class _TTSScreenState extends State<TTSScreen> {
                 : const SizedBox.shrink(), // Empty space when no suggestions
           ),
 
-          const SizedBox(height: 16),
+          if (_errorMessage != null) ...[
+            const SizedBox(height: 8),
+            _buildInlineError(),
+            const SizedBox(height: 8),
+          ] else
+            const SizedBox(height: 16),
 
           // Speak button and keyboard toggle row
           Row(
@@ -1671,6 +1733,65 @@ class _TTSScreenState extends State<TTSScreen> {
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  /// Error box above SPEAK NOW. Announced by screen readers when it appears.
+  Widget _buildInlineError() {
+    final title = _errorTitle;
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      child: Container(
+        padding: const EdgeInsets.only(left: 12),
+        decoration: BoxDecoration(
+          color: Colors.red[50],
+          border: Border.all(color: Colors.red[700]!, width: 2),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.error_outline, color: Colors.red[700], size: 28),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (title != null)
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.red[900],
+                        ),
+                      ),
+                    Text(
+                      _errorMessage!,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 18, color: Colors.red[900]),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            IconButton(
+              onPressed: _clearError,
+              icon: const Icon(Icons.close),
+              color: Colors.red[900],
+              tooltip: 'Dismiss',
+              constraints: const BoxConstraints(
+                minWidth: AccessibilityConstants.minTapTargetSize,
+                minHeight: AccessibilityConstants.minTapTargetSize,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

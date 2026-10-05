@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multi-line pastes have their newlines converted to spaces
 - iOS double-space "." shortcut is reverted in the TTS input
 - Selecting a word keeps input focus so the hardware keyboard can keep typing
+- Main screen errors show in a box above SPEAK NOW instead of a snackbar. They stay until the text is edited, Speak is tried again, or the box is dismissed, and are announced by screen readers
 - Minimum iOS version raised to 15.0. Flutter Swift Package Manager integration added
 - `flutter_secure_storage` 9 → 10 (migrates v9 data; stay on v10 until all installs have run it)
 - `shared_preferences` 2.5.5, `share_plus` 13, `file_picker` 12, `package_info_plus` 10
@@ -56,6 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A deleted custom phrase could be written back to storage
 - Add to Quick Phrases repaired the list without moving usage counts and cached audio, orphaning them
 - Removing a plain duplicate phrase deleted the surviving phrase's cached audio
+- Main screen error messages were hidden behind the on-screen keyboard
 
 ## [0.1.0+2] - 2024-11-05
 

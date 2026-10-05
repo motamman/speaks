@@ -79,6 +79,89 @@ void main() {
       );
       expect(result.text, 'hello. ');
     });
+
+    test('reverts deleteBackward + insert ". " sequence', () {
+      final formatter = SentenceInputFormatter();
+      // Step 1: UIKit deletes the first space (looks like a normal backspace)
+      final afterDelete = formatter.formatEditUpdate(
+        value('hello ', 6),
+        value('hello', 5),
+      );
+      expect(afterDelete.text, 'hello');
+      // Step 2: UIKit inserts ". "
+      final result = formatter.formatEditUpdate(
+        afterDelete,
+        value('hello. ', 7),
+      );
+      expect(result.text, 'hello ');
+      expect(result.selection.baseOffset, 6);
+    });
+
+    test('reverts deleteBackward + insert ". " mid-text', () {
+      final formatter = SentenceInputFormatter();
+      final result = formatter.formatEditUpdate(
+        value('hello world', 5),
+        value('hello.  world', 7),
+      );
+      expect(result.text, 'hello  world');
+      expect(result.selection.baseOffset, 6);
+    });
+
+    test('reverts replace-with-period + insert space sequence', () {
+      final formatter = SentenceInputFormatter();
+      // Step 1: UIKit replaces the space before the caret with '.'
+      final afterReplace = formatter.formatEditUpdate(
+        value('hello ', 6),
+        value('hello.', 6),
+      );
+      expect(afterReplace.text, 'hello ');
+      expect(afterReplace.selection.baseOffset, 6);
+      // Step 2: UIKit inserts the trailing space, which is swallowed
+      final result = formatter.formatEditUpdate(
+        afterReplace,
+        value('hello  ', 7),
+      );
+      expect(result.text, 'hello ');
+      expect(result.selection.baseOffset, 6);
+    });
+
+    test('a later space after a reverted shortcut is not swallowed', () {
+      final formatter = SentenceInputFormatter();
+      final afterReplace = formatter.formatEditUpdate(
+        value('hello ', 6),
+        value('hello.', 6),
+      );
+      final typed = formatter.formatEditUpdate(
+        afterReplace,
+        value('hello w', 7),
+      );
+      expect(typed.text, 'hello w');
+      final spaced = formatter.formatEditUpdate(typed, value('hello w ', 8));
+      expect(spaced.text, 'hello w ');
+    });
+
+    test('typing period then space keeps the period', () {
+      final formatter = SentenceInputFormatter();
+      final period = formatter.formatEditUpdate(
+        value('hello', 5),
+        value('hello.', 6),
+      );
+      expect(period.text, 'hello.');
+      final space = formatter.formatEditUpdate(period, value('hello. ', 7));
+      expect(space.text, 'hello. ');
+    });
+
+    test('does not fire the two-step shapes after punctuation', () {
+      final formatter = SentenceInputFormatter();
+      expect(
+        formatter.formatEditUpdate(value('hi!', 3), value('hi!. ', 5)).text,
+        'hi!. ',
+      );
+      expect(
+        formatter.formatEditUpdate(value('hi! ', 4), value('hi!.', 4)).text,
+        'hi!.',
+      );
+    });
   });
 
   group('newline handling', () {

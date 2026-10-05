@@ -8,6 +8,7 @@
 - iOS's double-space shortcut no longer inserts a stray period.
 - Picking a word keeps the keyboard active, so you can keep typing straight away.
 - The on-screen keyboard show/hide button has been removed.
+- Error messages now appear just above SPEAK NOW, so the on-screen keyboard can't hide them. They stay until you edit your text, try again, or tap ✕.
 
 ## Phrase repair
 - Fixes Quick Phrases that a sync bug had turned into garbled text like `{id: ..., text: ...}`. They're repaired automatically on the first launch, on the device and on the server.
