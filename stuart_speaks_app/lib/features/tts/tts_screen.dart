@@ -26,7 +26,7 @@ import '../../core/services/api_client.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/config/server_config.dart';
 import '../../core/utils/input_validator.dart';
-import '../../core/utils/phrase_sanitizer.dart';
+import '../../core/utils/phrase_storage_repair.dart';
 import '../../core/constants/accessibility_constants.dart';
 import '../../core/providers/tts_provider.dart';
 import '../input/word_wheel/word_wheel_widget_v2.dart';
@@ -992,17 +992,9 @@ class _TTSScreenState extends State<TTSScreen> {
   /// Add text to quick phrases
   Future<void> _addToQuickPhrases(String text, {Uint8List? cachedAudio}) async {
     final prefs = await SharedPreferences.getInstance();
-    final customPhrasesJson = prefs.getString('custom_phrases');
-    List<String> phrases = [];
-
-    if (customPhrasesJson != null) {
-      final List<dynamic> existingPhrases = jsonDecode(customPhrasesJson);
-      // Repair entries corrupted by the old sync bug so they aren't kept or
-      // spread by this write path
-      phrases = PhraseSanitizer.repairAll(
-        existingPhrases.map((e) => e.toString()),
-      ).phrases;
-    }
+    // Repair entries corrupted by the old sync bug so they aren't kept or
+    // spread by this write path, migrating their usage counts and audio
+    final phrases = await repairStoredCustomPhrases(prefs);
 
     // Check if already exists
     if (phrases.contains(text)) {

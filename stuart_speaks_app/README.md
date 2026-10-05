@@ -2,8 +2,8 @@
 
 A Flutter AAC (Augmentative and Alternative Communication) app with multi-provider TTS support and intelligent word prediction.
 
-**Version:** 0.3.0+4
-**Platform:** iOS 12.0+ / Android 5.0+
+**Version:** 0.3.5+12
+**Platform:** iOS 15.0+ / Android 7.0+
 
 ## About This App
 
@@ -17,6 +17,11 @@ A Flutter AAC (Augmentative and Alternative Communication) app with multi-provid
 - **Voice Cloning**: Fish.Audio, ElevenLabs, Play.ht, Resemble.AI support custom voices
 - **Text Chunking**: Automatically splits long text (>100 chars) for better audio quality
 - **Audio Caching**: Caches generated audio for instant replay
+
+### Keyboard Modes
+- **Type only** (default): Built for hardware keyboards. F1-F12 pick suggested words, Enter speaks, word wheel hidden so recent phrases get more room
+- **Type and touch**: On-screen word wheel and scrolling suggestions; Enter still speaks
+- Switch in Settings → Input Method
 
 ### Word Prediction
 - **Predictive Word Wheel**: Circular interface with 12 word suggestions
@@ -112,8 +117,8 @@ flutter run
 ## Usage
 
 1. Type message in text field (5,000 char max)
-2. Tap word suggestions or word wheel to insert words
-3. Tap "SPEAK NOW" to generate and play speech
+2. Insert words with F1-F12 (type only) or by tapping suggestions / the word wheel (type and touch)
+3. Press Enter or tap "SPEAK NOW" to generate and play speech
 4. Use Quick Phrases tab for saved phrases
 5. Recent phrases automatically cached for replay
 
@@ -123,13 +128,13 @@ flutter run
 # Core
 flutter_sound: ^9.16.3             # Audio playback
 http: ^1.1.0                       # TTS API calls
-shared_preferences: ^2.2.2         # Local storage
-flutter_secure_storage: ^9.2.4     # Encrypted credentials
+shared_preferences: ^2.5.5         # Local storage
+flutter_secure_storage: ^10.0.0    # Encrypted credentials (stay on v10 until all installs migrate)
 path_provider: ^2.1.5              # File paths
 crypto: ^3.0.3                     # Encryption
 provider: ^6.1.1                   # State management
-share_plus: ^12.0.1                # Share audio files
-file_picker: ^10.3.3               # Import vocabulary
+share_plus: ^13.3.0                # Share audio files
+file_picker: ^12.1.1               # Import vocabulary
 ```
 
 ## Project Structure

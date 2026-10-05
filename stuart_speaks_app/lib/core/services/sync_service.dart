@@ -171,11 +171,12 @@ class SyncService {
         // Only delete the corrupted row once its phrase is safe: either
         // nothing was recoverable, the clean text already exists remotely, or
         // the re-push succeeded. A failed push leaves the corrupted row in
-        // place for the next sync to retry.
+        // place for the next sync to retry, but the recovered text is still
+        // included in the merge result.
         var preserved = recovered == null || remotePhrases.contains(recovered);
-        if (recovered != null && !preserved && await pushPhrase(recovered)) {
+        if (recovered != null && !preserved) {
+          preserved = await pushPhrase(recovered);
           remotePhrases.add(recovered);
-          preserved = true;
         }
         if (preserved) {
           await deleteRemotePhrase(entry.key);

@@ -40,7 +40,7 @@ class PhraseSanitizer {
     final removed = <String>[];
     for (final text in phrases) {
       final clean = recover(text);
-      if (clean == null || repaired.contains(clean)) {
+      if (clean == null || clean.isEmpty || repaired.contains(clean)) {
         removed.add(text);
       } else {
         repaired.add(clean);

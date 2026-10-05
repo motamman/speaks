@@ -19,6 +19,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Export/import user data
 - Usage statistics and analytics
 
+## [0.3.5+12] - 2026-10-04
+
+### Added
+- **Keyboard mode setting** (Settings → Input Method)
+  - Type only (default): hardware-keyboard layout with no word wheel. Recent phrases fill the freed space
+  - Type and touch: on-screen word wheel and scrolling suggestions
+- F1–F12 select the matching suggested word in type-only mode
+- Suggestions populate on launch, so F-keys work before the first keystroke
+- `PhraseSanitizer` repairs phrases corrupted by the sync bug
+- `repairStoredCustomPhrases` (`phrase_storage_repair.dart`): one stored-phrase repair path shared by the Phrases screen and Add to Quick Phrases, with tests
+
+### Changed
+- Enter speaks the current text (hardware key, soft-keyboard action, or newline backstop) instead of inserting a newline
+- Multi-line pastes have their newlines converted to spaces
+- iOS double-space "." shortcut is reverted in the TTS input
+- Selecting a word keeps input focus so the hardware keyboard can keep typing
+- Minimum iOS version raised to 15.0. Flutter Swift Package Manager integration added
+- `flutter_secure_storage` 9 → 10 (migrates v9 data; stay on v10 until all installs have run it)
+- `shared_preferences` 2.5.5, `share_plus` 13, `file_picker` 12, `package_info_plus` 10
+- `flutter_sound_core` pod 9.30.0
+- Runner Debug configuration uses automatic signing
+- Minimum Dart SDK 3.10.0 / Flutter 3.38.1
+
+### Removed
+- On-screen keyboard show/hide toggle
+
+### Fixed
+- Sync stored stringified server records (`{id: ..., text: ...}`) as phrase text, nesting deeper on every sync
+  - Corrupted local and server phrases are recovered on load and sync. Unrecoverable server rows are deleted only after the clean phrase is safely stored
+  - Phrases that collapse to the same text are merged: usage counts summed, newest `lastModified` kept, first non-null category kept
+  - Usage counts and cached audio move to the repaired phrase text
+  - Recovered server phrases appear in the sync result even if re-uploading them fails. The corrupted row stays for the next sync to retry
+  - Empty phrases are dropped during repair
+  - Custom phrases that duplicate a default are skipped
+- A deleted custom phrase could be written back to storage
+- Add to Quick Phrases repaired the list without moving usage counts and cached audio, orphaning them
+- Removing a plain duplicate phrase deleted the surviving phrase's cached audio
+
 ## [0.1.0+2] - 2024-11-05
 
 ### Added
